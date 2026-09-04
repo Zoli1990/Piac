@@ -1,0 +1,46 @@
+:root {
+  --ink: #232620;
+  --paper: #F7F3E8;
+  --paper-dim: #EFE9D8;
+  --chalk-green: #2B3A2E;
+  --chalk-green-light: #3C4E3F;
+  --kapia: #C1440E;
+  --kapia-dark: #9C3608;
+  --olive: #6B7A4F;
+  --line: #D8CFB8;
+  --ok: #4C7A4C;
+  --owe: #B3441E;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0;
+  background: var(--paper-dim);
+  color: var(--ink);
+  font-family: -apple-system, 'Segoe UI', Arial, sans-serif;
+}
+input, select, button { font-family: inherit; font-size: 16px; }
+input, select {
+  padding: 10px 11px;
+  border: 1.5px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  min-height: 40px;
+  min-width: 0;
+  max-width: 100%;
+}
+input[type=checkbox] { min-height: auto; width: 20px; height: 20px; flex-shrink: 0; }
+input:focus, select:focus { outline: 2px solid var(--kapia); outline-offset: 1px; }
+button { cursor: pointer; min-height: 40px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 11px; text-transform: uppercase; color: var(--olive); padding: 8px; border-bottom: 2px solid var(--line); }
+td { padding: 8px; border-bottom: 1px solid var(--line); }
+.card { background: var(--paper); border-radius: 10px; border: 1px solid var(--line); padding: 16px 18px; min-width: 0; }
+.btn-primary { background: var(--kapia); color: #fff; border: none; border-radius: 8px; padding: 11px 18px; font-weight: 600; }
+.btn-secondary { background: #fff; color: var(--chalk-green); border: 1.5px solid var(--line); border-radius: 8px; padding: 10px 16px; font-weight: 600; }
+.hiba { color: var(--owe); font-size: 13px; }
+
+@media (max-width: 600px) {
+  .card { padding: 14px; }
+  .btn-primary, .btn-secondary { width: 100%; }
+}

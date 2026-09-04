@@ -1,0 +1,214 @@
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using RekeszAppBackend.Contracts;
+using RekeszAppBackend.Data;
+using RekeszAppBackend.Domain;
+using RekeszAppBackend.Infrastructure;
+namespace RekeszAppBackend.Controllers;
+[ApiController]
+[Route("api/felvasarlas")]
+[Authorize(Roles="Admin")]
+public class FelvasarlasController(AppDbContext db, IWebHostEnvironment env, IConfiguration config):ControllerBase
+{
+ [HttpGet]
+ public async Task<IActionResult> Lista([FromQuery]DateOnly? datum,[FromQuery]string? q){var d=datum??DateOnly.FromDateTime(DateTime.Today);var query=db.FelvasarlasTetelek.Where(x=>x.Datum==d);if(!string.IsNullOrWhiteSpace(q)){var term=q.Trim();if(int.TryParse(term,out var sorszam))query=query.Where(x=>x.NapiSorszam==sorszam||x.Zoldseg.Nev.Contains(term)||(!x.SajatTermek&&x.Partner!=null&&x.Partner.Nev.Contains(term)));else query=query.Where(x=>x.Zoldseg.Nev.Contains(term)||(!x.SajatTermek&&x.Partner!=null&&((x.Partner.Nev.Contains(term))||(x.Partner.Megjegyzes!=null&&x.Partner.Megjegyzes.Contains(term)))));}var tetelek=await query.Include(x=>x.Partner).Include(x=>x.Zoldseg).Include(x=>x.RekeszTipus).OrderBy(x=>x.NapiSorszam).Select(x=>new{x.Id,x.NapiSorszam,x.Datum,x.Ido,x.SajatTermek,x.PartnerId,partnerNev=x.Partner!=null?x.Partner.Nev:null,x.ZoldsegId,zoldsegNev=x.Zoldseg.Nev,zoldsegKepUrl=x.Zoldseg.KepUrl,x.RekeszTipusId,rekeszTipus=x.RekeszTipus.Nev,x.Mennyiseg,x.Fizetve,x.AdottRekeszDb,x.Egysegar,x.Megjegyzes,x.Athozott,helyszin=x.Helyszin.ToString(),x.AthelyezveDb}).ToListAsync();return Ok(tetelek);}
+
+ private static IActionResult? Validal(FelvasarlasRequest r){if(r.Mennyiseg<=0)return new BadRequestObjectResult(new{message="A mennyiség legalább 1 kell legyen."});if(r.AdottRekeszDb<0)return new BadRequestObjectResult(new{message="Az adott rekesz darabszáma nem lehet negatív."});if(r.AdottRekeszDb>r.Mennyiseg)return new BadRequestObjectResult(new{message="Az adott rekesz darabszáma nem lehet nagyobb a mennyiségnél."});if(!r.SajatTermek&&r.PartnerId is null)return new BadRequestObjectResult(new{message="Vásárolt árunál az eladó megadása kötelező."});if(r.Egysegar is <0)return new BadRequestObjectResult(new{message="Az egységár nem lehet negatív."});return null;}
+
+ [HttpPost]public async Task<IActionResult> Uj(FelvasarlasRequest r){var h=Validal(r);if(h is not null)return h;var s=db.Database.CreateExecutionStrategy();return await s.ExecuteAsync(async()=>{await using var tx=await db.Database.BeginTransactionAsync();var d=r.Datum??DateOnly.FromDateTime(DateTime.Today);var n=(await db.FelvasarlasTetelek.Where(x=>x.Datum==d).MaxAsync(x=>(int?)x.NapiSorszam)??0)+1;var e=new FelvasarlasTetel{NapiSorszam=n,Datum=d,Ido=DateTime.Now,SajatTermek=r.SajatTermek,PartnerId=r.SajatTermek?null:r.PartnerId,ZoldsegId=r.ZoldsegId,RekeszTipusId=r.RekeszTipusId,Mennyiseg=r.Mennyiseg,Fizetve=r.Fizetve,AdottRekeszDb=r.AdottRekeszDb,Egysegar=r.Egysegar,Megjegyzes=string.IsNullOrWhiteSpace(r.Megjegyzes)?null:r.Megjegyzes!.Trim(),Helyszin=r.Helyszin};db.FelvasarlasTetelek.Add(e);await db.SaveChangesAsync();await tx.CommitAsync();return Created($"api/felvasarlas/{e.Id}",e);});}
+
+ [HttpPut("{id:int}")]public async Task<IActionResult> Modosit(int id,FelvasarlasRequest r){var e=await db.FelvasarlasTetelek.FindAsync(id);if(e is null)return NotFound();var h=Validal(r);if(h is not null)return h;e.SajatTermek=r.SajatTermek;e.PartnerId=r.SajatTermek?null:r.PartnerId;e.ZoldsegId=r.ZoldsegId;e.RekeszTipusId=r.RekeszTipusId;e.Mennyiseg=r.Mennyiseg;e.Fizetve=r.Fizetve;e.AdottRekeszDb=r.AdottRekeszDb;e.Egysegar=r.Egysegar;e.Megjegyzes=string.IsNullOrWhiteSpace(r.Megjegyzes)?null:r.Megjegyzes!.Trim();e.Helyszin=r.Helyszin;await db.SaveChangesAsync();return Ok(e);}
+
+ [HttpDelete("{id:int}")]public async Task<IActionResult> Torol(int id){var e=await db.FelvasarlasTetelek.FindAsync(id);if(e is null)return NotFound();db.FelvasarlasTetelek.Remove(e);await db.SaveChangesAsync();return NoContent();}
+
+ // Kocsin maradt áru átvitele egy másik (jellemzően a következő) napra.
+ // Automatikusan létrehoz egy "Athozott" felvásárlás-sort a célnapon, eladó és ár nélkül,
+ // hogy a kocsi-kimutatás és az eladás onnantól úgy kezelje, mintha aznap "felvásároltuk" volna.
+ [HttpPost("atvitel")]
+ public async Task<IActionResult> Atvitel(AtvitelRequest r)
+ {
+     if (r.Mennyiseg <= 0) return BadRequest(new { message = "A mennyiség legalább 1 kell legyen." });
+     var zoldsegLetezik = await db.Zoldsegek.AnyAsync(x => x.Id == r.ZoldsegId);
+     var rekeszLetezik = await db.RekeszTipusok.AnyAsync(x => x.Id == r.RekeszTipusId);
+     if (!zoldsegLetezik || !rekeszLetezik) return BadRequest(new { message = "Ismeretlen zöldség vagy rekesztípus." });
+
+     var strategy = db.Database.CreateExecutionStrategy();
+     return await strategy.ExecuteAsync(async () =>
+     {
+         await using var tx = await db.Database.BeginTransactionAsync();
+         var napiSorszam = (await db.FelvasarlasTetelek.Where(x => x.Datum == r.CelDatum).MaxAsync(x => (int?)x.NapiSorszam) ?? 0) + 1;
+         var entity = new FelvasarlasTetel
+         {
+             NapiSorszam = napiSorszam,
+             Datum = r.CelDatum,
+             Ido = DateTime.Now,
+             SajatTermek = true,
+             PartnerId = null,
+             ZoldsegId = r.ZoldsegId,
+             RekeszTipusId = r.RekeszTipusId,
+             Mennyiseg = r.Mennyiseg,
+             Fizetve = true,
+             AdottRekeszDb = 0,
+             Egysegar = null,
+             Megjegyzes = "Áthozva az előző napról",
+             Athozott = true
+         };
+         db.FelvasarlasTetelek.Add(entity);
+         await db.SaveChangesAsync();
+         await tx.CommitAsync();
+         return Created($"api/felvasarlas/{entity.Id}", entity);
+     });
+ }
+
+ // Wizard-mentés: ugyanazokat a mezőket veszi fel, mint a sima POST, de multipart/form-data-ként,
+ // és elfogad hozzá egy opcionális fotót is (telefonos fotózás vagy fájlválasztás).
+ // FONTOS: a fotó nem az adott tételre, hanem a kiválasztott ZÖLDSÉG KATEGÓRIÁRA vonatkozik -
+ // ha van kép, felülírja az adott zöldséghez korábban elmentett képet (minden ilyen zöldségtétel
+ // ugyanazt fogja mutatni, függetlenül az eladótól). Ha nincs új kép, a zöldség meglévő képe marad.
+ [HttpPost("wizard")]
+ [RequestSizeLimit(10_000_000)]
+ public async Task<IActionResult> UjWizard([FromForm] bool sajatTermek, [FromForm] int? partnerId, [FromForm] int zoldsegId, [FromForm] int rekeszTipusId, [FromForm] int mennyiseg, [FromForm] bool fizetve, [FromForm] int adottRekeszDb, [FromForm] decimal? egysegar, [FromForm] string? megjegyzes, [FromForm] DateOnly? datum, [FromForm] FelvasarlasHelyszin helyszin, IFormFile? kep)
+ {
+     var r = new FelvasarlasRequest(sajatTermek, partnerId, zoldsegId, rekeszTipusId, mennyiseg, fizetve, adottRekeszDb, egysegar, megjegyzes, datum, helyszin);
+     var h = Validal(r);
+     if (h is not null) return h;
+
+     var zoldseg = await db.Zoldsegek.FindAsync(zoldsegId);
+     if (zoldseg is null) return BadRequest(new { message = "Ismeretlen zöldség." });
+
+     if (kep != null && kep.Length > 0)
+     {
+         if (!kep.ContentType.StartsWith("image/")) return BadRequest(new { message = "Csak kép tölthető fel." });
+         if (kep.Length > 5_000_000) return BadRequest(new { message = "A kép mérete legfeljebb 5 MB lehet." });
+         var uploadsDir = UploadsPaths.Resolve(env, config);
+         var fileName = Guid.NewGuid() + ".jpg";
+         var filePath = Path.Combine(uploadsDir, fileName);
+         try
+         {
+             await using var input = kep.OpenReadStream();
+             await ImageProcessing.SaveResizedAsync(input, filePath);
+         }
+         catch (SixLabors.ImageSharp.UnknownImageFormatException)
+         {
+             return BadRequest(new { message = "A fájl nem értelmezhető képként." });
+         }
+         UploadsPaths.DeleteIfExists(env, config, zoldseg.KepUrl);
+         zoldseg.KepUrl = "/uploads/" + fileName;
+     }
+
+     var strategy = db.Database.CreateExecutionStrategy();
+     return await strategy.ExecuteAsync(async () =>
+     {
+         await using var tx = await db.Database.BeginTransactionAsync();
+         var d = datum ?? DateOnly.FromDateTime(DateTime.Today);
+         var n = (await db.FelvasarlasTetelek.Where(x => x.Datum == d).MaxAsync(x => (int?)x.NapiSorszam) ?? 0) + 1;
+         var e = new FelvasarlasTetel
+         {
+             NapiSorszam = n,
+             Datum = d,
+             Ido = DateTime.Now,
+             SajatTermek = sajatTermek,
+             PartnerId = sajatTermek ? null : partnerId,
+             ZoldsegId = zoldsegId,
+             RekeszTipusId = rekeszTipusId,
+             Mennyiseg = mennyiseg,
+             Fizetve = fizetve,
+             AdottRekeszDb = adottRekeszDb,
+             Egysegar = egysegar,
+             Megjegyzes = string.IsNullOrWhiteSpace(megjegyzes) ? null : megjegyzes.Trim(),
+             Helyszin = helyszin
+         };
+         db.FelvasarlasTetelek.Add(e);
+         await db.SaveChangesAsync();
+         await tx.CommitAsync();
+         return Created($"api/felvasarlas/{e.Id}", e);
+     });
+ }
+
+ // Raktáron lévő, még ki nem szállított készlet - TÉTELENKÉNT (nem összesítve), hogy minden
+ // csempén látszódjon az eladó és az ár is. Nem naphoz kötött (a raktár nem "aznapi" fogalom):
+ // minden Raktár helyszínű sor számít, amiből még maradt ki nem szállított mennyiség.
+ [HttpGet("raktar")]
+ public async Task<IActionResult> Raktar()
+ {
+     var sorok = await db.FelvasarlasTetelek
+         .Where(x => x.Helyszin == FelvasarlasHelyszin.Raktar && x.Mennyiseg > x.AthelyezveDb)
+         .Include(x => x.Partner).Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
+         .OrderBy(x => x.Datum).ThenBy(x => x.Ido)
+         .Select(x => new
+         {
+             x.Id,
+             x.NapiSorszam,
+             x.Datum,
+             x.Ido,
+             x.SajatTermek,
+             x.PartnerId,
+             partnerNev = x.Partner != null ? x.Partner.Nev : null,
+             x.ZoldsegId,
+             zoldsegNev = x.Zoldseg.Nev,
+             zoldsegKepUrl = x.Zoldseg.KepUrl,
+             x.RekeszTipusId,
+             rekeszTipus = x.RekeszTipus.Nev,
+             x.Egysegar,
+             x.Megjegyzes,
+             x.Athozott,
+             helyszin = x.Helyszin.ToString(),
+             x.AdottRekeszDb,
+             x.Fizetve,
+             mennyiseg = x.Mennyiseg,
+             athelyezveDb = x.AthelyezveDb,
+             maradt = x.Mennyiseg - x.AthelyezveDb
+         })
+         .ToListAsync();
+     return Ok(sorok);
+ }
+
+ // Raktáron lévő áru (részleges vagy teljes mennyiség) áthelyezése a kocsira, egy adott napra.
+ // Egy konkrét raktári tételről von le. A célnapon egy "Athozott" kocsi-sor jön létre,
+ // ami nem valódi új kiadás (a pénz már elszámolva lett a raktárba kerüléskor).
+ [HttpPost("raktarbol-kocsira")]
+ public async Task<IActionResult> RaktarbolKocsira(RaktarAthelyezesRequest r)
+ {
+     if (r.Mennyiseg <= 0) return BadRequest(new { message = "A mennyiség legalább 1 kell legyen." });
+
+     var forras = await db.FelvasarlasTetelek.FindAsync(r.FelvasarlasTetelId);
+     if (forras is null || forras.Helyszin != FelvasarlasHelyszin.Raktar)
+         return BadRequest(new { message = "Ismeretlen raktári tétel." });
+
+     var maradt = forras.Mennyiseg - forras.AthelyezveDb;
+     if (r.Mennyiseg > maradt)
+         return BadRequest(new { message = $"A raktáron csak {maradt} db van ebből a tételből." });
+
+     var strategy = db.Database.CreateExecutionStrategy();
+     return await strategy.ExecuteAsync(async () =>
+     {
+         await using var tx = await db.Database.BeginTransactionAsync();
+
+         forras.AthelyezveDb += r.Mennyiseg;
+
+         var napiSorszam = (await db.FelvasarlasTetelek.Where(x => x.Datum == r.CelDatum).MaxAsync(x => (int?)x.NapiSorszam) ?? 0) + 1;
+         var kocsiSor = new FelvasarlasTetel
+         {
+             NapiSorszam = napiSorszam,
+             Datum = r.CelDatum,
+             Ido = DateTime.Now,
+             SajatTermek = true,
+             PartnerId = null,
+             ZoldsegId = forras.ZoldsegId,
+             RekeszTipusId = forras.RekeszTipusId,
+             Mennyiseg = r.Mennyiseg,
+             Fizetve = true,
+             AdottRekeszDb = 0,
+             Egysegar = forras.Egysegar,
+             Megjegyzes = "Áthelyezve a raktárból",
+             Athozott = true,
+             Helyszin = FelvasarlasHelyszin.Kocsi
+         };
+         db.FelvasarlasTetelek.Add(kocsiSor);
+         await db.SaveChangesAsync();
+         await tx.CommitAsync();
+         return Created($"api/felvasarlas/{kocsiSor.Id}", kocsiSor);
+     });
+ }
+}
