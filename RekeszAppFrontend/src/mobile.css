@@ -55,19 +55,25 @@ header .user .btn-secondary { width: auto !important; padding-inline: 12px !impo
 .torzsadat-linkek .link-btn { width: 100%; }
 
 /* Image tiles: target roughly 4:3, not the old 16:9 crop. */
-.felv-grid {
+.felv-grid,
+.stock-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   gap: 10px !important;
 }
-.felv-tile { width: 100%; min-width: 0; }
-.felv-tile-photo {
+.felv-tile, .stock-tile { width: 100%; min-width: 0; }
+.felv-tile-photo,
+.stock-tile-photo,
+[class*="tile-photo"] {
   aspect-ratio: 4 / 3 !important;
+  height: auto !important;
   min-height: 0 !important;
 }
 .felv-tile-name { font-size: 12px !important; line-height: 1.2; }
 .felv-tile-info { font-size: 10px !important; line-height: 1.25; }
-.raktar-tile-wrap { min-width: 0; }
-.raktar-tile-wrap .athelyez-btn { width: 100%; }
+.stock-tile-strip strong { font-size: 12px !important; }
+.stock-tile-strip span { font-size: 16px !important; }
+.raktar-tile-wrap, .stock-tile { min-width: 0; }
+.raktar-tile-wrap .athelyez-btn, .stock-tile-atvitel { width: 100%; }
 
 /* Forms and compact controls */
 .narrow-3, .narrow-5, .price-input { max-width: 100% !important; width: 100% !important; }
@@ -93,7 +99,8 @@ header .user .btn-secondary { width: auto !important; padding-inline: 12px !impo
 .overlay > .card,
 .overlay > .modal,
 .athelyez-modal,
-.felv-detail-modal {
+.felv-detail-modal,
+.sale-modal {
   width: 100% !important;
   max-width: none !important;
   max-height: calc(100dvh - 16px) !important;
@@ -107,6 +114,7 @@ header .user .btn-secondary { width: auto !important; padding-inline: 12px !impo
 .overlay .icon, .overlay .close { min-width: 44px; min-height: 44px; }
 .overlay .nav-row { flex-direction: column-reverse; gap: 8px; }
 .overlay .nav-row button { width: 100%; }
+.detail-tiles { grid-template-columns: 1fr !important; }
 
 /* Calculator has its own overlay class. */
 .calc-overlay {
@@ -126,8 +134,8 @@ header .user .btn-secondary { width: auto !important; padding-inline: 12px !impo
 @media (max-width: 360px) {
   main { padding: 9px !important; }
   .card { padding: 12px !important; }
-  .felv-grid { grid-template-columns: 1fr !important; }
-  .felv-tile-photo { aspect-ratio: 4 / 3 !important; }
+  .felv-grid, .stock-grid { grid-template-columns: 1fr !important; }
+  .felv-tile-photo, .stock-tile-photo, [class*="tile-photo"] { aspect-ratio: 4 / 3 !important; }
   header nav a { font-size: 12px; }
   .calculator { max-width: 100% !important; padding: 10px !important; }
   .keys { gap: 7px !important; }
@@ -140,13 +148,14 @@ header .user .btn-secondary { width: auto !important; padding-inline: 12px !impo
   main.no-header { max-width: 420px !important; padding-top: 80px !important; }
   .grid { grid-template-columns: 1fr 1.4fr !important; gap: 18px !important; }
   .row { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
-  .felv-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 12px !important; }
-  .felv-tile-photo { aspect-ratio: 4 / 3 !important; }
+  .felv-grid, .stock-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 12px !important; }
+  .felv-tile-photo, .stock-tile-photo, [class*="tile-photo"] { aspect-ratio: 4 / 3 !important; }
   .overlay { align-items: center !important; justify-content: center !important; padding: 14px !important; }
   .overlay > .card,
   .overlay > .modal,
   .athelyez-modal,
-  .felv-detail-modal { max-width: 520px !important; max-height: 85vh !important; border-radius: 10px !important; }
+  .felv-detail-modal,
+  .sale-modal { max-width: 520px !important; max-height: 85vh !important; border-radius: 10px !important; }
   .overlay .nav-row { flex-direction: row; }
   .overlay .nav-row button { width: auto; }
   .calc-overlay { align-items: center !important; justify-content: center !important; padding: 20px !important; }
