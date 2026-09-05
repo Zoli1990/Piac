@@ -12,10 +12,11 @@ main.no-header { max-width: 100% !important; padding-top: 32px !important; }
 .row { grid-template-columns: 1fr !important; gap: 10px !important; }
 
 .card { min-width: 0; width: 100%; padding: 14px !important; border-radius: 12px !important; }
-.card input, .card select, .card textarea { width: 100%; max-width: 100% !important; min-width: 0; }
+.card input:not([type="checkbox"]):not([type="radio"]), .card select, .card textarea { width: 100%; max-width: 100% !important; min-width: 0; }
 
-/* Touch targets */
-button, input, select { min-height: 44px; }
+/* Touch targets without making checkbox/radio controls oversized. */
+button, input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; }
+input[type="checkbox"], input[type="radio"] { min-height: 20px !important; width: 20px !important; height: 20px; flex-shrink: 0; }
 .btn-primary, .btn-secondary { min-height: 44px; }
 .link-btn, .foto-btn, .toggle-pill, .radio-pill { min-height: 44px; }
 
