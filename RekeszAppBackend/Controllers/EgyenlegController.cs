@@ -7,7 +7,7 @@ namespace RekeszAppBackend.Controllers;
 
 [ApiController]
 [Route("api/egyenleg")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public class EgyenlegController(AppDbContext db) : ControllerBase
 {
     [HttpGet]
@@ -15,17 +15,13 @@ public class EgyenlegController(AppDbContext db) : ControllerBase
     {
         var eladok = await db.FelvasarlasTetelek
             .Where(x => !x.SajatTermek && x.PartnerId != null && (!x.Fizetve || x.Mennyiseg > x.AdottRekeszDb))
-            .Include(x => x.Partner)
-            .Include(x => x.Zoldseg)
-            .Include(x => x.RekeszTipus)
+            .Include(x => x.Partner).Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
             .OrderBy(x => x.Partner!.Nev).ThenBy(x => x.RekeszTipus.Nev).ThenBy(x => x.Datum).ThenBy(x => x.Id)
             .ToListAsync();
 
         var vevok = await db.EladasTetelek
-            .Where(x => (!x.Fizetve || (x.Mennyiseg - x.VisszahozottDb - x.HianyFizettDb) > 0))
-            .Include(x => x.Vevo)
-            .Include(x => x.Zoldseg)
-            .Include(x => x.RekeszTipus)
+            .Where(x => !x.Fizetve || (x.Mennyiseg - x.VisszahozottDb - x.HianyFizettDb) > 0)
+            .Include(x => x.Vevo).Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
             .OrderBy(x => x.Vevo!.Nev).ThenBy(x => x.RekeszTipus.Nev).ThenBy(x => x.Datum).ThenBy(x => x.Id)
             .ToListAsync();
 
@@ -41,20 +37,13 @@ public class EgyenlegController(AppDbContext db) : ControllerBase
                 osszeg = g.Where(x => !x.Fizetve && x.Egysegar.HasValue).Sum(x => x.Mennyiseg * x.Egysegar!.Value),
                 tetelek = g.Select(x => new
                 {
-                    x.Id,
-                    x.Datum,
-                    x.NapiSorszam,
-                    zoldsegNev = x.Zoldseg.Nev,
-                    x.Mennyiseg,
-                    x.Egysegar,
+                    x.Id, x.Datum, x.NapiSorszam, zoldsegNev = x.Zoldseg.Nev, x.Mennyiseg, x.Egysegar,
                     osszeg = !x.Fizetve && x.Egysegar.HasValue ? x.Mennyiseg * x.Egysegar.Value : 0m,
-                    x.Fizetve,
-                    hozottDb = x.AdottRekeszDb,
+                    x.Fizetve, hozottDb = x.AdottRekeszDb,
                     nyitottRekeszDb = Math.Max(0, x.Mennyiseg - x.AdottRekeszDb),
                     teljesMennyiseg = x.Mennyiseg
                 }).ToList()
-            })
-            .ToList();
+            }).ToList();
 
         var vevoCsoportok = vevok
             .GroupBy(x => new { x.VevoId, VevoNev = x.Vevo != null ? x.Vevo.Nev : null, x.RekeszTipusId, RekeszTipus = x.RekeszTipus.Nev })
@@ -68,20 +57,13 @@ public class EgyenlegController(AppDbContext db) : ControllerBase
                 osszeg = g.Where(x => !x.Fizetve && x.Egysegar.HasValue).Sum(x => x.Mennyiseg * x.Egysegar!.Value),
                 tetelek = g.Select(x => new
                 {
-                    x.Id,
-                    x.Datum,
-                    x.NapiSorszam,
-                    zoldsegNev = x.Zoldseg.Nev,
-                    x.Mennyiseg,
-                    x.Egysegar,
+                    x.Id, x.Datum, x.NapiSorszam, zoldsegNev = x.Zoldseg.Nev, x.Mennyiseg, x.Egysegar,
                     osszeg = !x.Fizetve && x.Egysegar.HasValue ? x.Mennyiseg * x.Egysegar.Value : 0m,
-                    x.Fizetve,
-                    hozottDb = x.VisszahozottDb,
+                    x.Fizetve, hozottDb = x.VisszahozottDb,
                     nyitottRekeszDb = Math.Max(0, x.Mennyiseg - x.VisszahozottDb - x.HianyFizettDb),
                     teljesMennyiseg = x.Mennyiseg
                 }).ToList()
-            })
-            .ToList();
+            }).ToList();
 
         return Ok(new { eladok = eladoCsoportok, vevok = vevoCsoportok });
     }
@@ -93,11 +75,9 @@ public class EgyenlegController(AppDbContext db) : ControllerBase
     {
         var entity = await db.FelvasarlasTetelek.FindAsync(id);
         if (entity is null || entity.SajatTermek || entity.PartnerId is null) return NotFound();
-
         var hozott = request.TeljesMennyiseg ? entity.Mennyiseg : request.HozottDb;
         if (hozott < 0 || hozott > entity.Mennyiseg)
             return BadRequest(new { message = "A hozott rekesz mennyisége 0 és a teljes mennyiség között kell legyen." });
-
         entity.AdottRekeszDb = hozott;
         entity.Fizetve = request.Fizetve;
         await db.SaveChangesAsync();
@@ -109,11 +89,9 @@ public class EgyenlegController(AppDbContext db) : ControllerBase
     {
         var entity = await db.EladasTetelek.FindAsync(id);
         if (entity is null) return NotFound();
-
         var hozott = request.TeljesMennyiseg ? entity.Mennyiseg : request.HozottDb;
         if (hozott < 0 || hozott > entity.Mennyiseg)
             return BadRequest(new { message = "A hozott rekesz mennyisége 0 és a teljes mennyiség között kell legyen." });
-
         entity.VisszahozottDb = hozott;
         if (entity.HianyFizettDb > entity.Mennyiseg - entity.VisszahozottDb)
             entity.HianyFizettDb = entity.Mennyiseg - entity.VisszahozottDb;
