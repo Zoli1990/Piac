@@ -11,8 +11,6 @@ namespace RekeszAppBackend.Controllers;
 [Authorize]
 public class RiportokController(AppDbContext db) : ControllerBase
 {
-    // Eladóknak tartozunk: Σ(Mennyiseg - AdottRekeszDb) partnerenként és rekesztípusonként.
-    // Saját termék (és az áthozott) tételeknek nincs partnere, azok nem termelnek rekesztartozást.
     [HttpGet("mi-tartozunk")]
     public async Task<IActionResult> MiTartozunk()
     {
@@ -34,8 +32,6 @@ public class RiportokController(AppDbContext db) : ControllerBase
         return Ok(sorok);
     }
 
-    // Nekünk tartoznak: Σ((Mennyiseg - VisszahozottDb) - HianyFizettDb) vevőnként és rekesztípusonként
-    // - azaz a vissza nem hozott rekeszekből az, amit se rekeszben, se készpénzben nem rendeztek.
     [HttpGet("nekunk-tartoznak")]
     public async Task<IActionResult> NekunkTartoznak()
     {
@@ -56,7 +52,6 @@ public class RiportokController(AppDbContext db) : ControllerBase
         return Ok(sorok);
     }
 
-    // Kifizetett rekeszveszteség - azok a tételek, ahol a vevő készpénzben rendezte a hiányzó rekeszt.
     [HttpGet("rekeszveszteseg")]
     public async Task<IActionResult> Rekeszveszteseg()
     {
@@ -79,8 +74,11 @@ public class RiportokController(AppDbContext db) : ControllerBase
         return Ok(sorok);
     }
 
-    // Kocsi tartalma: adott napon felvásárolt (ide értve az áthozott tételeket is) mennyiség mínusz
-    // az aznap eladott mennyiség, zöldségenként és rekesztípusonként. Ez mutatja, mennyi maradt a kocsin.
+    // Kocsi készlet zöldség + rekesztípus szerint csoportosítva.
+    // Az eladások jelenleg nem hivatkoznak konkrét felvásárlási tételre, ezért a
+    // fennmaradó mennyiséget a csoporton belül arányosan osztjuk vissza a forrástételekre.
+    // Ez nem FIFO, és nem állítja, hogy az egyes megmaradt darabok konkrét forrása ismert.
+    // Így az átlagos vételár a jelenleg megmaradt mennyiségre vonatkozó becslés.
     [Authorize(Roles = "Admin")]
     [HttpGet("keszlet")]
     public async Task<IActionResult> Keszlet([FromQuery] DateOnly? datum)
@@ -90,8 +88,17 @@ public class RiportokController(AppDbContext db) : ControllerBase
         var felvasarolt = await db.FelvasarlasTetelek
             .Where(x => x.Datum == d && x.Helyszin == FelvasarlasHelyszin.Kocsi)
             .Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
-            .GroupBy(x => new { x.ZoldsegId, ZoldsegNev = x.Zoldseg.Nev, x.RekeszTipusId, RekeszTipusNev = x.RekeszTipus.Nev })
-            .Select(g => new { g.Key.ZoldsegId, g.Key.ZoldsegNev, g.Key.RekeszTipusId, g.Key.RekeszTipusNev, Mennyiseg = g.Sum(x => x.Mennyiseg) })
+            .Select(x => new
+            {
+                x.Id,
+                x.ZoldsegId,
+                zoldsegNev = x.Zoldseg.Nev,
+                x.RekeszTipusId,
+                rekeszTipus = x.RekeszTipus.Nev,
+                x.Mennyiseg,
+                x.Egysegar,
+                x.Athozott
+            })
             .ToListAsync();
 
         var eladott = await db.EladasTetelek
@@ -101,25 +108,47 @@ public class RiportokController(AppDbContext db) : ControllerBase
             .ToListAsync();
 
         var sorok = felvasarolt
-            .Select(f => new
+            .GroupBy(x => new { x.ZoldsegId, x.zoldsegNev, x.RekeszTipusId, x.rekeszTipus })
+            .Select(g =>
             {
-                zoldsegId = f.ZoldsegId,
-                zoldsegNev = f.ZoldsegNev,
-                rekeszTipusId = f.RekeszTipusId,
-                rekeszTipus = f.RekeszTipusNev,
-                felvasarolva = f.Mennyiseg,
-                eladva = eladott.Where(e => e.ZoldsegId == f.ZoldsegId && e.RekeszTipusId == f.RekeszTipusId).Sum(e => e.Mennyiseg),
-                kocsinMaradt = f.Mennyiseg - eladott.Where(e => e.ZoldsegId == f.ZoldsegId && e.RekeszTipusId == f.RekeszTipusId).Sum(e => e.Mennyiseg)
+                var felvasarolva = g.Sum(x => x.Mennyiseg);
+                var eladva = eladott.FirstOrDefault(e => e.ZoldsegId == g.Key.ZoldsegId && e.RekeszTipusId == g.Key.RekeszTipusId)?.Mennyiseg ?? 0;
+                var kocsinMaradt = Math.Max(0, felvasarolva - eladva);
+
+                var arasTetelek = g.Where(x => x.Egysegar.HasValue && x.Egysegar.Value >= 0).ToList();
+                var arNelkul = g.Where(x => !x.Egysegar.HasValue).Sum(x => x.Mennyiseg);
+                var fizetettArasMennyiseg = arasTetelek.Sum(x => x.Mennyiseg);
+                var atlagVetelAr = fizetettArasMennyiseg > 0
+                    ? arasTetelek.Sum(x => x.Mennyiseg * x.Egysegar!.Value) / fizetettArasMennyiseg
+                    : (decimal?)null;
+
+                return new
+                {
+                    zoldsegId = g.Key.ZoldsegId,
+                    zoldsegNev = g.Key.zoldsegNev,
+                    rekeszTipusId = g.Key.RekeszTipusId,
+                    rekeszTipus = g.Key.rekeszTipus,
+                    felvasarolva,
+                    eladva,
+                    kocsinMaradt,
+                    atlagVetelAr,
+                    arNelkulMennyiseg = arNelkul,
+                    forrasTetelek = g.Select(x => new
+                    {
+                        id = x.Id,
+                        eredetiMennyiseg = x.Mennyiseg,
+                        egysegar = x.Egysegar,
+                        athozott = x.Athozott
+                    }).ToList()
+                };
             })
-            .OrderBy(x => x.zoldsegNev)
+            .Where(x => x.kocsinMaradt > 0)
+            .OrderBy(x => x.zoldsegNev).ThenBy(x => x.rekeszTipus)
             .ToList();
 
         return Ok(sorok);
     }
 
-    // Rekesz-mennyiség részletező: rekesztípusonként összesítve, hány rekesz került ki aznap a kocsira
-    // (saját + felvásárolt + áthozott, zöldségtől függetlenül), és ebből ténylegesen hány jött vissza
-    // az aznapi eladásokon keresztül. Pl. "M10: 110/97".
     [Authorize(Roles = "Admin")]
     [HttpGet("rekeszreszletezo")]
     public async Task<IActionResult> RekeszReszletezo([FromQuery] DateOnly? datum)
@@ -153,8 +182,6 @@ public class RiportokController(AppDbContext db) : ControllerBase
         return Ok(sorok);
     }
 
-    // Részletes pénzügyi könyvelés: bevétel, kiadás, nyereség egy időszakra.
-    // Az áthozott (előző napról átvitt) felvásárlás-sorok nem valódi vásárlások, ezért kimaradnak a kiadásból.
     [Authorize(Roles = "Admin")]
     [HttpGet("konyveles")]
     public async Task<IActionResult> Konyveles([FromQuery] DateOnly? tol, [FromQuery] DateOnly? ig)
