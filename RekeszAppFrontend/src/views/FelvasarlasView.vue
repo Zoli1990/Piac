@@ -10,6 +10,7 @@ const hiba=ref(''),betolt=ref(true),datum=ref(today())
 const showPartnerModal=ref(false),showZoldsegModal=ref(false),showRekeszModal=ref(false),editId=ref(null),editForm=ref({})
 const form=ref({sajatTermek:false,partnerId:'',zoldsegId:'',rekeszTipusId:'',mennyiseg:'',fizetve:false,adottRekeszDb:0,egysegar:'',megjegyzes:'',helyszin:'Kocsi'})
 const athelyezesStock=ref(null),athelyezesForm=ref({mennyiseg:1,celDatum:''}),athelyezesHiba=ref('')
+const raktarDetail=ref(null)
 const fotoInput=ref(null),fotoFeltoltesFolyamatban=ref(false),fotoMentveJelzes=ref(false)
 function today(){return new Date().toISOString().slice(0,10)}
 function fmtDate(d){return new Date(d+'T00:00:00').toLocaleDateString('hu-HU')}
@@ -17,7 +18,7 @@ const apiRoot=client.defaults.baseURL.replace(/\/api\/?$/,'')
 function kepSrc(u){return u?.startsWith('http')?u:apiRoot+u}
 function clampDigits(v,n){const d=String(v??'').replace(/[^0-9]/g,'').slice(0,n);return d===''?'':Number(d)}
 async function torzsadatok(){try{const[p,z,r]=await Promise.all([client.get('/partnerek'),client.get('/zoldsegek'),client.get('/rekesztipusok')]);partnerek.value=p.data;zoldsegek.value=z.data;rekesztipusok.value=r.data}catch{hiba.value='Nem sikerült betölteni a törzsadatokat.'}}
-async function frissitRaktar(){try{raktar.value=(await client.get('/felvasarlas/raktar')).data}catch{hiba.value='Nem sikerült betölteni a raktárkészletet.'}}
+async function frissitRaktar(){try{raktar.value=(await client.get('/felvasarlas/raktar-csoportos')).data}catch{hiba.value='Nem sikerült betölteni a raktárkészletet.'}}
 async function frissit(){betolt.value=true;hiba.value='';try{items.value=(await client.get('/felvasarlas',{params:{datum:datum.value}})).data}catch{hiba.value='Nem sikerült betölteni a felvásárlásokat.'}finally{betolt.value=false}await frissitRaktar()}
 onMounted(async()=>{await torzsadatok();await frissit()});watch(datum,frissit)
 watch(()=>form.value.zoldsegId,id=>{const z=zoldsegek.value.find(x=>x.id===Number(id));if(z?.alapertelmezettRekeszTipusId)form.value.rekeszTipusId=z.alapertelmezettRekeszTipusId})
@@ -56,9 +57,29 @@ function zarFelvDetail(){felvDetail.value=null;editId.value=null}
 async function mentesModalbol(){await mentSzerkesztes(felvDetail.value.id);if(!hiba.value)zarFelvDetail()}
 async function torolModalbol(){const it=felvDetail.value;if(!confirm(`Törlöd a #${it.napiSorszam} tételt (${it.zoldsegNev})?`))return;try{await client.delete(`/felvasarlas/${it.id}`);zarFelvDetail();await frissit()}catch{hiba.value='Törlés sikertelen.'}}
 
-function nyitAthelyezes(s){athelyezesStock.value=s;athelyezesForm.value={mennyiseg:s.maradt,celDatum:today()};athelyezesHiba.value=''}
+function nyitRaktarDetail(s){raktarDetail.value=s}
+function zarRaktarDetail(){raktarDetail.value=null}
+function nyitForrasAthelyezes(s,forras){
+  athelyezesStock.value={...forras,zoldsegNev:s.zoldsegNev,rekeszTipus:s.rekeszTipus}
+  athelyezesForm.value={mennyiseg:forras.maradt,celDatum:today()}
+  athelyezesHiba.value=''
+}
+function nyitAthelyezes(s){
+  if(s.forrasTetelek?.length===1){nyitForrasAthelyezes(s,s.forrasTetelek[0]);return}
+  nyitRaktarDetail(s)
+}
 function zarAthelyezes(){athelyezesStock.value=null}
-async function athelyezes(){athelyezesHiba.value='';const s=athelyezesStock.value;if(!athelyezesForm.value.mennyiseg||Number(athelyezesForm.value.mennyiseg)<=0)return athelyezesHiba.value='A mennyiség legalább 1 kell legyen.';if(Number(athelyezesForm.value.mennyiseg)>s.maradt)return athelyezesHiba.value='Nincs ennyi a raktáron.';try{await client.post('/felvasarlas/raktarbol-kocsira',{felvasarlasTetelId:s.id,mennyiseg:Number(athelyezesForm.value.mennyiseg),celDatum:athelyezesForm.value.celDatum});zarAthelyezes();await frissit()}catch(e){athelyezesHiba.value=e.response?.data?.message||'Áthelyezés sikertelen.'}}
+async function athelyezes(){
+  athelyezesHiba.value=''
+  const s=athelyezesStock.value
+  if(!s)return
+  if(!athelyezesForm.value.mennyiseg||Number(athelyezesForm.value.mennyiseg)<=0)return athelyezesHiba.value='A mennyiség legalább 1 kell legyen.'
+  if(Number(athelyezesForm.value.mennyiseg)>s.maradt)return athelyezesHiba.value='Nincs ennyi a kiválasztott forrástételben.'
+  try{
+    await client.post('/felvasarlas/raktarbol-kocsira',{felvasarlasTetelId:s.id,mennyiseg:Number(athelyezesForm.value.mennyiseg),celDatum:athelyezesForm.value.celDatum})
+    zarAthelyezes();zarRaktarDetail();await frissit()
+  }catch(e){athelyezesHiba.value=e.response?.data?.message||'Áthelyezés sikertelen.'}
+}
 async function ujTetel(){hiba.value='';if(!form.value.sajatTermek&&!form.value.partnerId)return hiba.value='Vásárolt árunál az eladó kiválasztása kötelező.';if(!form.value.sajatTermek&&(form.value.egysegar===''||form.value.egysegar==null))return hiba.value='Vásárolt árunál az egységár megadása kötelező.';if(!form.value.zoldsegId||!form.value.rekeszTipusId)return hiba.value='Zöldség és rekesztípus kiválasztása kötelező.';if(!form.value.mennyiseg||Number(form.value.mennyiseg)<=0)return hiba.value='A mennyiség legalább 1 kell legyen.';if(Number(form.value.adottRekeszDb)>Number(form.value.mennyiseg))return hiba.value='Az adott rekesz nem lehet több a mennyiségnél.';try{await client.post('/felvasarlas',{sajatTermek:form.value.sajatTermek,partnerId:form.value.sajatTermek?null:Number(form.value.partnerId),zoldsegId:Number(form.value.zoldsegId),rekeszTipusId:Number(form.value.rekeszTipusId),mennyiseg:Number(form.value.mennyiseg),fizetve:form.value.fizetve,adottRekeszDb:Number(form.value.adottRekeszDb)||0,egysegar:form.value.egysegar===''?null:Number(form.value.egysegar),megjegyzes:form.value.megjegyzes.trim()||null,datum:datum.value,helyszin:form.value.helyszin});form.value={...form.value,zoldsegId:'',mennyiseg:'',fizetve:false,adottRekeszDb:0,egysegar:'',megjegyzes:''};await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
 function szerkesztesInditasa(i){editId.value=i.id;editForm.value={sajatTermek:i.sajatTermek,partnerId:i.partnerId||'',zoldsegId:i.zoldsegId,rekeszTipusId:i.rekeszTipusId,mennyiseg:i.mennyiseg,fizetve:i.fizetve,adottRekeszDb:i.adottRekeszDb,egysegar:i.egysegar??'',megjegyzes:i.megjegyzes||'',helyszin:i.helyszin||'Kocsi',datum:i.datum}}
 async function mentSzerkesztes(id){hiba.value='';try{await client.put(`/felvasarlas/${id}`,{sajatTermek:editForm.value.sajatTermek,partnerId:editForm.value.sajatTermek?null:Number(editForm.value.partnerId),zoldsegId:Number(editForm.value.zoldsegId),rekeszTipusId:Number(editForm.value.rekeszTipusId),mennyiseg:Number(editForm.value.mennyiseg),fizetve:editForm.value.fizetve,adottRekeszDb:Number(editForm.value.adottRekeszDb)||0,egysegar:editForm.value.egysegar===''?null:Number(editForm.value.egysegar),megjegyzes:editForm.value.megjegyzes.trim()||null,datum:editForm.value.datum,helyszin:editForm.value.helyszin});editId.value=null;await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
@@ -123,14 +144,15 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
 
   <div class="card raktar-card">
     <h2>🏬 Raktáron lévő készlet</h2>
-    <p class="muted raktar-hint">Nem naphoz kötött - amíg nem helyezed át a kocsira, nem jelenik meg eladásra.</p>
+    <p class="muted raktar-hint">Nem naphoz kötött - azonos zöldség + rekesztípus egy kártyán. Áthelyezéskor az eredeti felvásárlási tételt választod ki.</p>
     <div class="felv-grid">
-      <div v-for="s in raktar" :key="s.id" class="raktar-tile-wrap">
-        <button type="button" class="felv-tile" @click="nyitFelvDetail(s)">
+      <div v-for="s in raktar" :key="`${s.zoldsegId}-${s.rekeszTipusId}`" class="raktar-tile-wrap">
+        <button type="button" class="felv-tile" @click="nyitRaktarDetail(s)">
           <div class="felv-tile-photo" :class="{'no-photo':!s.zoldsegKepUrl}" :style="csempeStilus(s.zoldsegId)">
             <div class="felv-tile-overlay">
               <span class="felv-tile-name">{{s.zoldsegNev}}</span>
-              <span class="felv-tile-info">{{s.maradt}} {{s.rekeszTipus}} · {{s.egysegar!=null?s.egysegar+' Ft':'ár nélkül'}}</span>
+              <span class="felv-tile-info">{{s.maradt}} {{s.rekeszTipus}} · {{s.atlagVetelAr!=null?s.atlagVetelAr.toFixed(2)+' Ft/db':'ár nélkül'}}</span>
+              <span v-if="s.arNelkulMennyiseg>0" class="felv-tile-info">{{s.arNelkulMennyiseg}} db ár nélkül</span>
             </div>
             <span v-if="!s.zoldsegKepUrl" class="felv-tile-placeholder">🥬</span>
           </div>
@@ -138,6 +160,23 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
         <button type="button" class="btn-secondary athelyez-btn" @click="nyitAthelyezes(s)">🚚 Áthelyezés a kocsira</button>
       </div>
       <div v-if="!raktar.length" class="ures">Nincs raktáron tárolt áru.</div>
+    </div>
+  </div>
+
+  <div v-if="raktarDetail" class="overlay" @click.self="zarRaktarDetail">
+    <div class="card athelyez-modal raktar-detail-modal">
+      <div class="section-head"><h2>{{raktarDetail.zoldsegNev}} — {{raktarDetail.rekeszTipus}}</h2><button type="button" class="icon" @click="zarRaktarDetail">✕</button></div>
+      <p class="muted">Összesen: <strong>{{raktarDetail.maradt}} db</strong></p>
+      <p class="muted raktar-detail-hint">Válaszd ki, melyik eredeti felvásárlási tételből szeretnél áthelyezni. A rendszer nem von össze és nem választ automatikusan FIFO szerint.</p>
+      <div class="forras-list">
+        <div v-for="f in raktarDetail.forrasTetelek" :key="f.id" class="forras-row">
+          <div>
+            <strong>Felvásárlási tétel #{{f.id}}</strong>
+            <div class="muted">{{f.maradt}} db · {{f.egysegar!=null?f.egysegar+' Ft/db':'ár nélkül'}}</div>
+          </div>
+          <button type="button" class="btn-secondary forras-btn" @click="nyitForrasAthelyezes(raktarDetail,f)">Kiválaszt</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -168,8 +207,9 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
 
   <div v-if="athelyezesStock" class="overlay" @click.self="zarAthelyezes">
     <div class="card athelyez-modal">
-      <h2>Áthelyezés: {{ athelyezesStock.zoldsegNev }} ({{ athelyezesStock.rekeszTipus }})</h2>
-      <p class="muted">Raktáron: {{ athelyezesStock.maradt }} db</p>
+      <div class="section-head"><h2>Áthelyezés: {{ athelyezesStock.zoldsegNev }} ({{ athelyezesStock.rekeszTipus }})</h2><button type="button" class="icon" @click="zarAthelyezes">✕</button></div>
+      <p class="muted">Forrás: felvásárlási tétel #{{athelyezesStock.id}} · Raktáron: {{ athelyezesStock.maradt }} db</p>
+      <p class="muted">Vételár: {{athelyezesStock.egysegar!=null?athelyezesStock.egysegar+' Ft/db':'nincs megadva'}}</p>
       <div class="row">
         <label>Mennyiség<input v-model="athelyezesForm.mennyiseg" type="number" min="1" :max="athelyezesStock.maradt" /></label>
         <label>Célnap<input v-model="athelyezesForm.celDatum" type="date" /></label>
@@ -188,16 +228,10 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
 .felv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .felv-tile{text-align:left;border:1px solid rgba(43,58,46,.15);border-radius:12px;background:#fff;overflow:hidden;cursor:pointer;padding:0;display:flex;flex-direction:column;box-shadow:0 2px 7px rgba(0,0,0,.05)}
 .felv-tile-photo{position:relative;aspect-ratio:16/9;background-color:rgba(107,122,79,.08);background-size:cover;background-position:center;display:flex;align-items:flex-end;justify-content:center}
-.felv-tile-placeholder{font-size:30px;margin-bottom:10px}
-.felv-tile-overlay{position:absolute;top:0;left:0;right:0;background:rgba(255,255,255,.92);display:flex;flex-direction:column}
-.felv-tile-name{padding:6px 9px 1px;font-size:13px;font-weight:700;color:var(--chalk-green);text-transform:none}
-.felv-tile-info{padding:0 9px 6px;font-size:11px;font-weight:600;color:var(--olive);text-transform:none}
-.felv-detail-modal{max-width:460px}
-.overlay{position:fixed;inset:0;background:rgba(35,38,32,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:14px}.athelyez-modal{width:100%;max-width:380px}.nav-row{display:flex;gap:10px;margin-top:10px}.nav-row button{flex:1;min-height:40px;border-radius:8px;font-weight:700;cursor:pointer}.btn-primary{background:var(--chalk-green);color:var(--paper);border:0}.btn-secondary{background:#fff;border:1px solid rgba(43,58,46,.2);color:var(--chalk-green)}
-.narrow-3{max-width:70px}.narrow-5{max-width:95px}
-.foto-row{margin:-2px 0 14px}.foto-btn{width:100%;min-height:44px;border-radius:10px;border:2px dashed rgba(43,58,46,.3);background:rgba(107,122,79,.05);color:var(--chalk-green);font-weight:700;font-size:13px;cursor:pointer;text-transform:none}.foto-btn:hover{border-color:var(--olive)}.foto-btn:disabled{opacity:.6;cursor:default}
+.felv-tile-placeholder{font-size:30px;margin-bottom:10px}.felv-tile-overlay{position:absolute;top:0;left:0;right:0;background:rgba(255,255,255,.92);display:flex;flex-direction:column}.felv-tile-name{padding:6px 9px 1px;font-size:13px;font-weight:700;color:var(--chalk-green);text-transform:none}.felv-tile-info{padding:0 9px 6px;font-size:11px;font-weight:600;color:var(--olive);text-transform:none}
+.felv-detail-modal{max-width:460px}.overlay{position:fixed;inset:0;background:rgba(35,38,32,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:14px}.athelyez-modal{width:100%;max-width:380px}.nav-row{display:flex;gap:10px;margin-top:10px}.nav-row button{flex:1;min-height:40px;border-radius:8px;font-weight:700;cursor:pointer}.btn-primary{background:var(--chalk-green);color:var(--paper);border:0}.btn-secondary{background:#fff;border:1px solid rgba(43,58,46,.2);color:var(--chalk-green)}
+.narrow-3{max-width:70px}.narrow-5{max-width:95px}.foto-row{margin:-2px 0 14px}.foto-btn{width:100%;min-height:44px;border-radius:10px;border:2px dashed rgba(43,58,46,.3);background:rgba(107,122,79,.05);color:var(--chalk-green);font-weight:700;font-size:13px;cursor:pointer;text-transform:none}.foto-btn:hover{border-color:var(--olive)}.foto-btn:disabled{opacity:.6;cursor:default}
 .toggle-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(43,58,46,.2);border-radius:20px;padding:9px 16px;background:#fff;color:var(--chalk-green);font-weight:700;font-size:13px;cursor:pointer;margin-bottom:14px}.toggle-pill.active{background:var(--chalk-green);color:var(--paper);border-color:var(--chalk-green)}
-.torzsadat-linkek{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(43,58,46,.1)}
-.link-btn{background:#fff;border:1px solid rgba(43,58,46,.25);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--chalk-green);cursor:pointer;text-transform:none}
-.link-btn:hover{background:rgba(107,122,79,.08);border-color:var(--olive)}
+.torzsadat-linkek{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(43,58,46,.1)}.link-btn{background:#fff;border:1px solid rgba(43,58,46,.25);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--chalk-green);cursor:pointer;text-transform:none}.link-btn:hover{background:rgba(107,122,79,.08);border-color:var(--olive)}
+.raktar-detail-modal{max-width:480px}.raktar-detail-hint{font-size:12px;line-height:1.45}.forras-list{display:flex;flex-direction:column;gap:8px;margin-top:12px}.forras-row{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid rgba(43,58,46,.12);border-radius:9px;padding:10px;background:#fff}.forras-row strong{color:var(--chalk-green);font-size:13px}.forras-row .muted{font-size:11px;margin-top:3px}.forras-btn{white-space:nowrap;padding:7px 10px;border-radius:8px;font-weight:700;cursor:pointer}
 </style>
