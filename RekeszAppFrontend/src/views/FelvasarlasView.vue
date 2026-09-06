@@ -8,8 +8,7 @@ import Gyorskereso from '../components/Gyorskereso.vue'
 const items=ref([]),partnerek=ref([]),zoldsegek=ref([]),rekesztipusok=ref([]),raktar=ref([])
 const hiba=ref(''),betolt=ref(true),datum=ref(today())
 const showPartnerModal=ref(false),showZoldsegModal=ref(false),showRekeszModal=ref(false),editId=ref(null),editForm=ref({})
-const form=ref({sajatTermek:false,partnerId:'',zoldsegId:'',rekeszTipusId:'',mennyiseg:'',fizetve:false,adottRekeszDb:'',egysegar:'',megjegyzes:'',helyszin:'Kocsi'})
-const adottRekeszManual=ref(false)
+const form=ref({sajatTermek:false,partnerId:'',zoldsegId:'',rekeszTipusId:'',mennyiseg:'',fizetve:false,adottRekeszDb:0,egysegar:'',megjegyzes:'',helyszin:'Kocsi'})
 const athelyezesStock=ref(null),athelyezesForm=ref({mennyiseg:1,celDatum:''}),athelyezesHiba=ref('')
 const fotoInput=ref(null),fotoFeltoltesFolyamatban=ref(false),fotoMentveJelzes=ref(false)
 function today(){return new Date().toISOString().slice(0,10)}
@@ -22,8 +21,7 @@ async function frissitRaktar(){try{raktar.value=(await client.get('/felvasarlas/
 async function frissit(){betolt.value=true;hiba.value='';try{items.value=(await client.get('/felvasarlas',{params:{datum:datum.value}})).data}catch{hiba.value='Nem sikerült betölteni a felvásárlásokat.'}finally{betolt.value=false}await frissitRaktar()}
 onMounted(async()=>{await torzsadatok();await frissit()});watch(datum,frissit)
 watch(()=>form.value.zoldsegId,id=>{const z=zoldsegek.value.find(x=>x.id===Number(id));if(z?.alapertelmezettRekeszTipusId)form.value.rekeszTipusId=z.alapertelmezettRekeszTipusId})
-watch(()=>form.value.mennyiseg,v=>{if(!adottRekeszManual.value)form.value.adottRekeszDb=v})
-function adottRekeszValt(e){adottRekeszManual.value=true;form.value.adottRekeszDb=clampDigits(e.target.value,3)}
+function adottRekeszValt(e){form.value.adottRekeszDb=clampDigits(e.target.value,3) ?? 0}
 function zoldsegLetrehozva(z){zoldsegek.value.push(z)}
 function rekeszLetrehozva(r){rekesztipusok.value.push(r)}
 function partnerLetrehozva(p){partnerek.value.push(p)}
@@ -61,7 +59,7 @@ async function torolModalbol(){const it=felvDetail.value;if(!confirm(`Törlöd a
 function nyitAthelyezes(s){athelyezesStock.value=s;athelyezesForm.value={mennyiseg:s.maradt,celDatum:today()};athelyezesHiba.value=''}
 function zarAthelyezes(){athelyezesStock.value=null}
 async function athelyezes(){athelyezesHiba.value='';const s=athelyezesStock.value;if(!athelyezesForm.value.mennyiseg||Number(athelyezesForm.value.mennyiseg)<=0)return athelyezesHiba.value='A mennyiség legalább 1 kell legyen.';if(Number(athelyezesForm.value.mennyiseg)>s.maradt)return athelyezesHiba.value='Nincs ennyi a raktáron.';try{await client.post('/felvasarlas/raktarbol-kocsira',{felvasarlasTetelId:s.id,mennyiseg:Number(athelyezesForm.value.mennyiseg),celDatum:athelyezesForm.value.celDatum});zarAthelyezes();await frissit()}catch(e){athelyezesHiba.value=e.response?.data?.message||'Áthelyezés sikertelen.'}}
-async function ujTetel(){hiba.value='';if(!form.value.sajatTermek&&!form.value.partnerId)return hiba.value='Vásárolt árunál az eladó kiválasztása kötelező.';if(!form.value.zoldsegId||!form.value.rekeszTipusId)return hiba.value='Zöldség és rekesztípus kiválasztása kötelező.';if(!form.value.mennyiseg||Number(form.value.mennyiseg)<=0)return hiba.value='A mennyiség legalább 1 kell legyen.';if(Number(form.value.adottRekeszDb)>Number(form.value.mennyiseg))return hiba.value='Az adott rekesz nem lehet több a mennyiségnél.';try{await client.post('/felvasarlas',{sajatTermek:form.value.sajatTermek,partnerId:form.value.sajatTermek?null:Number(form.value.partnerId),zoldsegId:Number(form.value.zoldsegId),rekeszTipusId:Number(form.value.rekeszTipusId),mennyiseg:Number(form.value.mennyiseg),fizetve:form.value.fizetve,adottRekeszDb:Number(form.value.adottRekeszDb)||0,egysegar:form.value.egysegar===''?null:Number(form.value.egysegar),megjegyzes:form.value.megjegyzes.trim()||null,datum:datum.value,helyszin:form.value.helyszin});adottRekeszManual.value=false;form.value={...form.value,zoldsegId:'',mennyiseg:'',fizetve:false,adottRekeszDb:'',egysegar:'',megjegyzes:''};await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
+async function ujTetel(){hiba.value='';if(!form.value.sajatTermek&&!form.value.partnerId)return hiba.value='Vásárolt árunál az eladó kiválasztása kötelező.';if(!form.value.sajatTermek&&(form.value.egysegar===''||form.value.egysegar==null))return hiba.value='Vásárolt árunál az egységár megadása kötelező.';if(!form.value.zoldsegId||!form.value.rekeszTipusId)return hiba.value='Zöldség és rekesztípus kiválasztása kötelező.';if(!form.value.mennyiseg||Number(form.value.mennyiseg)<=0)return hiba.value='A mennyiség legalább 1 kell legyen.';if(Number(form.value.adottRekeszDb)>Number(form.value.mennyiseg))return hiba.value='Az adott rekesz nem lehet több a mennyiségnél.';try{await client.post('/felvasarlas',{sajatTermek:form.value.sajatTermek,partnerId:form.value.sajatTermek?null:Number(form.value.partnerId),zoldsegId:Number(form.value.zoldsegId),rekeszTipusId:Number(form.value.rekeszTipusId),mennyiseg:Number(form.value.mennyiseg),fizetve:form.value.fizetve,adottRekeszDb:Number(form.value.adottRekeszDb)||0,egysegar:form.value.egysegar===''?null:Number(form.value.egysegar),megjegyzes:form.value.megjegyzes.trim()||null,datum:datum.value,helyszin:form.value.helyszin});form.value={...form.value,zoldsegId:'',mennyiseg:'',fizetve:false,adottRekeszDb:0,egysegar:'',megjegyzes:''};await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
 function szerkesztesInditasa(i){editId.value=i.id;editForm.value={sajatTermek:i.sajatTermek,partnerId:i.partnerId||'',zoldsegId:i.zoldsegId,rekeszTipusId:i.rekeszTipusId,mennyiseg:i.mennyiseg,fizetve:i.fizetve,adottRekeszDb:i.adottRekeszDb,egysegar:i.egysegar??'',megjegyzes:i.megjegyzes||'',helyszin:i.helyszin||'Kocsi',datum:i.datum}}
 async function mentSzerkesztes(id){hiba.value='';try{await client.put(`/felvasarlas/${id}`,{sajatTermek:editForm.value.sajatTermek,partnerId:editForm.value.sajatTermek?null:Number(editForm.value.partnerId),zoldsegId:Number(editForm.value.zoldsegId),rekeszTipusId:Number(editForm.value.rekeszTipusId),mennyiseg:Number(editForm.value.mennyiseg),fizetve:editForm.value.fizetve,adottRekeszDb:Number(editForm.value.adottRekeszDb)||0,egysegar:editForm.value.egysegar===''?null:Number(editForm.value.egysegar),megjegyzes:editForm.value.megjegyzes.trim()||null,datum:editForm.value.datum,helyszin:editForm.value.helyszin});editId.value=null;await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
 async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.zoldsegNev})?`))return;try{await client.delete(`/felvasarlas/${i.id}`);await frissit()}catch{hiba.value='Törlés sikertelen.'}}
@@ -92,7 +90,7 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
       <label>Rekesztípus<Gyorskereso v-model="form.rekeszTipusId" :items="rekesztipusok" post-path="/rekesztipusok" mentes-label="Rekesztípus mentése" placeholder="pl. M10" @created="rekeszLetrehozva" /></label>
       <div class="row">
         <label>Mennyiség (db)<input :value="form.mennyiseg" @input="form.mennyiseg=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label>
-        <label>{{form.sajatTermek?'Becsült önköltség (Ft/db)':'Egységár (Ft/db)'}}<input :value="form.egysegar" @input="form.egysegar=clampDigits($event.target.value,5)" inputmode="numeric" pattern="[0-9]*" class="narrow-5" placeholder="opcionális" /></label>
+        <label>{{form.sajatTermek?'Becsült önköltség (Ft/db)':'Egységár (Ft/db)'}}<input :value="form.egysegar" @input="form.egysegar=clampDigits($event.target.value,5)" inputmode="numeric" pattern="[0-9]*" class="narrow-5" :required="!form.sajatTermek" :placeholder="form.sajatTermek?'opcionális':'kötelező'" /></label>
       </div>
       <label v-if="!form.sajatTermek">Adott üres rekesz (db)<input :value="form.adottRekeszDb" @input="adottRekeszValt" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label>
       <button type="button" class="toggle-pill" :class="{active:form.fizetve}" @click="form.fizetve=!form.fizetve">{{form.fizetve?'✅ Fizetve':'⬜ Fizetve'}}</button>
@@ -143,7 +141,6 @@ async function torol(i){if(!confirm(`Törlöd a #${i.napiSorszam} tételt (${i.z
     </div>
   </div>
 
-  <!-- Felvásárlás/raktár tétel részletei, szerkesztés, törlés -->
   <div v-if="felvDetail" class="overlay" @click.self="zarFelvDetail">
     <div class="card athelyez-modal felv-detail-modal">
       <div class="section-head"><h2>{{felvDetail.zoldsegNev}} — #{{felvDetail.napiSorszam}}</h2><button type="button" class="icon" @click="zarFelvDetail">✕</button></div>
