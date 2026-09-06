@@ -75,10 +75,8 @@ public class RiportokController(AppDbContext db) : ControllerBase
     }
 
     // Kocsi készlet zöldség + rekesztípus szerint csoportosítva.
-    // Az eladások jelenleg nem hivatkoznak konkrét felvásárlási tételre, ezért a
-    // fennmaradó mennyiséget a csoporton belül arányosan osztjuk vissza a forrástételekre.
-    // Ez nem FIFO, és nem állítja, hogy az egyes megmaradt darabok konkrét forrása ismert.
-    // Így az átlagos vételár a jelenleg megmaradt mennyiségre vonatkozó becslés.
+    // Az eladás nem hivatkozik konkrét felvásárlási tételre, és erre nincs is szükség:
+    // a készletet darabszám alapján követjük. Vételáras készletértékelést nem végzünk.
     [Authorize(Roles = "Admin")]
     [HttpGet("keszlet")]
     public async Task<IActionResult> Keszlet([FromQuery] DateOnly? datum)
@@ -96,7 +94,6 @@ public class RiportokController(AppDbContext db) : ControllerBase
                 x.RekeszTipusId,
                 rekeszTipus = x.RekeszTipus.Nev,
                 x.Mennyiseg,
-                x.Egysegar,
                 x.Athozott
             })
             .ToListAsync();
@@ -115,13 +112,6 @@ public class RiportokController(AppDbContext db) : ControllerBase
                 var eladva = eladott.FirstOrDefault(e => e.ZoldsegId == g.Key.ZoldsegId && e.RekeszTipusId == g.Key.RekeszTipusId)?.Mennyiseg ?? 0;
                 var kocsinMaradt = Math.Max(0, felvasarolva - eladva);
 
-                var arasTetelek = g.Where(x => x.Egysegar.HasValue && x.Egysegar.Value >= 0).ToList();
-                var arNelkul = g.Where(x => !x.Egysegar.HasValue).Sum(x => x.Mennyiseg);
-                var fizetettArasMennyiseg = arasTetelek.Sum(x => x.Mennyiseg);
-                var atlagVetelAr = fizetettArasMennyiseg > 0
-                    ? arasTetelek.Sum(x => x.Mennyiseg * x.Egysegar!.Value) / fizetettArasMennyiseg
-                    : (decimal?)null;
-
                 return new
                 {
                     zoldsegId = g.Key.ZoldsegId,
@@ -131,13 +121,10 @@ public class RiportokController(AppDbContext db) : ControllerBase
                     felvasarolva,
                     eladva,
                     kocsinMaradt,
-                    atlagVetelAr,
-                    arNelkulMennyiseg = arNelkul,
                     forrasTetelek = g.Select(x => new
                     {
                         id = x.Id,
                         eredetiMennyiseg = x.Mennyiseg,
-                        egysegar = x.Egysegar,
                         athozott = x.Athozott
                     }).ToList()
                 };
@@ -153,17 +140,15 @@ public class RiportokController(AppDbContext db) : ControllerBase
     [HttpGet("rekeszreszletezo")]
     public async Task<IActionResult> RekeszReszletezo([FromQuery] DateOnly? datum)
     {
-        var d = datum ?? DateOnly.FromDateTime(DateTime.Today);
-
         var kocsira_kerult = await db.FelvasarlasTetelek
-            .Where(x => x.Datum == d && x.Helyszin == FelvasarlasHelyszin.Kocsi)
+            .Where(x => x.Datum == (datum ?? DateOnly.FromDateTime(DateTime.Today)) && x.Helyszin == FelvasarlasHelyszin.Kocsi)
             .Include(x => x.RekeszTipus)
             .GroupBy(x => new { x.RekeszTipusId, RekeszTipusNev = x.RekeszTipus.Nev })
             .Select(g => new { g.Key.RekeszTipusId, g.Key.RekeszTipusNev, Osszesen = g.Sum(x => x.Mennyiseg) })
             .ToListAsync();
 
         var visszahozott = await db.EladasTetelek
-            .Where(x => x.Datum == d)
+            .Where(x => x.Datum == (datum ?? DateOnly.FromDateTime(DateTime.Today)))
             .GroupBy(x => x.RekeszTipusId)
             .Select(g => new { RekeszTipusId = g.Key, Visszahozott = g.Sum(x => x.VisszahozottDb) })
             .ToListAsync();
