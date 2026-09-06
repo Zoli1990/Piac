@@ -68,6 +68,7 @@ A most lezárt szakasz fő témája:
 6. Raktár → kocsi mozgatás kezelése csoportosított készletből.
 7. Készlethez kapcsolódó korábbi félreérthető vételár-logika tisztázása.
 8. A készletmodell egyszerűsítése: **nem vezetünk be FIFO-t vagy rejtett készletforrás-allokációt.**
+9. Felvásárlási lista frontend oldali csoportosítása azonos zöldség + rekesztípus + felvásárlási ár alapján.
 
 A következő lépés elsődlegesen a teljes lokális tesztelés, nem új funkciók azonnali hozzáadása.
 
@@ -317,6 +318,58 @@ A `FelvasarlasView.vue` főbb funkciói:
 
 A zöldséghez beállítható alapértelmezett rekesztípus. A zöldség kiválasztásakor ezt a rendszer felajánlja, de a felhasználó felülírhatja.
 
+## 10.1. Felvásárlási lista csoportosítása
+
+A felvásárlási lista **csak frontend megjelenítésben csoportosít**. Az adatbázisban az eredeti felvásárlási tételek továbbra is külön rekordok maradnak, saját ID-val és napi sorszámmal.
+
+Egy csoport feltétele pontosan:
+
+- azonos zöldség;
+- azonos rekesztípus;
+- azonos felvásárlási ár.
+
+A következők **nem** részei a csoportosítási kulcsnak:
+
+- partner / eladó;
+- napi sorszám;
+- dátum/időpont.
+
+A dátum továbbra is az oldal lekérdezési szűrője: az adott nap rekordjai kerülnek csoportosításra.
+
+Példa:
+
+```text
+#101 Alma M10 – 10 db – 500 Ft
+#102 Alma M10 – 15 db – 500 Ft
+#103 Alma M10 – 20 db – 500 Ft
+#104 Alma M10 –  8 db – 600 Ft
+```
+
+Megjelenítés:
+
+```text
+Alma M10 – 45 db – 500 Ft
+Alma M10 –  8 db – 600 Ft
+```
+
+A csoport mennyisége az eredeti tételek mennyiségének összege.
+
+Az ár összehasonlítása numerikusan történik, ezért például `500` és `"500"` ugyanabba a csoportba kerül. A `null`/hiányzó ár külön, „ár nélkül” csoport.
+
+### Csoport részletezése
+
+Ha egy csempére több eredeti rekord került, kattintáskor először egy részletező lista jelenik meg. Ebben az eredeti napi sorszámok láthatók.
+
+A felhasználó innen választhatja ki a konkrét tételt szerkesztésre vagy törlésre. Így a csoportosítás nem veszít el semmilyen egyedi adatot, például:
+
+- partnert;
+- fizetve állapotot;
+- adott rekesz mennyiséget;
+- megjegyzést;
+- eredeti napi sorszámot.
+
+A csoportosítás **nem módosítja és nem vonja össze az adatbázist**.
+
 ---
 
 # 11. Backend fontos endpointok
@@ -483,6 +536,14 @@ Commit:
 
 `0415e44f3e8938d4b485a039d8ae96e0737a1ea0`
 
+### Felvásárlási lista frontend csoportosítása
+
+A `FelvasarlasView.vue` a napi felvásárlási rekordokat zöldség + rekesztípus + felvásárlási ár szerint csoportosítja. Az eredeti rekordok megmaradnak, és a csoport részletezőjéből az egyedi napi sorszámú tételek szerkeszthetők/törölhetők.
+
+Commit:
+
+`2b4a6b3f584252e1b9a0594394aadc09918642ae`
+
 ---
 
 # 14. Aktuális fejlesztési állapot
@@ -508,6 +569,9 @@ Commit:
 - [x] Nincs FIFO
 - [x] Nincs rejtett készletforrás-allokáció
 - [x] Vételár nem része a készletmodellnek
+- [x] Felvásárlási lista frontend csoportosítása zöldség + rekesztípus + felvásárlási ár szerint
+- [x] Csoport részletező az eredeti napi sorszámú tételekhez
+- [x] Csoportosítás adatbázis-összevonás nélkül
 
 ## Még tesztelendő
 
@@ -515,6 +579,13 @@ Commit:
 - [ ] Új felvásárlás saját termékkel
 - [ ] Felvásárlás szerkesztése
 - [ ] Felvásárlás törlése
+- [ ] Azonos zöldség + rekesztípus + ár több rekordból egy csempébe kerül
+- [ ] Eltérő felvásárlási ár külön csempét eredményez
+- [ ] Eltérő rekesztípus külön csempét eredményez
+- [ ] Több partner azonos csoportba kerülhet
+- [ ] Csoport részletezőből a megfelelő napi sorszám kiválasztható
+- [ ] Csoportból kiválasztott tétel szerkesztése
+- [ ] Csoportból kiválasztott tétel törlése
 - [ ] Raktárkészlet több partnerből
 - [ ] Raktárkészlet több dátumból
 - [ ] Több forrástételből álló raktárcsoport mozgatása
@@ -604,6 +675,24 @@ Alma M10 – 25 db
 
 A rendszernek **nem kell megmondania**, hogy a 10 db melyik felvásárlási tételből származott.
 
+A felvásárlási lista külön tesztpéldája:
+
+```text
+#101 Alma M10 – 10 db – 500 Ft
+#102 Alma M10 – 15 db – 500 Ft
+#103 Alma M10 – 20 db – 500 Ft
+#104 Alma M10 –  8 db – 600 Ft
+```
+
+Elvárt frontend:
+
+```text
+Alma M10 – 45 db – 500 Ft
+Alma M10 –  8 db – 600 Ft
+```
+
+A négy eredeti adatbázisrekord ettől még változatlanul különálló rekord marad.
+
 ---
 
 # 17. Mit NE vezessünk be később automatikusan?
@@ -616,148 +705,3 @@ Külön felhasználói döntés nélkül nem szabad bevezetni:
 - automatikus felvásárlási tétel-allokációt;
 - eladás → konkrét felvásárlás kapcsolatot;
 - felvásárlási tételek adatbázis-szintű összevonását.
-
-Ha ezek közül bármelyik szükségessé válik, előbb az üzleti folyamatot kell tisztázni.
-
----
-
-# 18. Ha később pontos önköltség/árrés kell
-
-A jelenlegi rendszer ezt szándékosan nem kezeli készletszinten.
-
-Ha később szükség lesz rá, akkor külön projektként kell megtervezni.
-
-Lehetséges irányok:
-
-### A) Felhasználó választja ki a forrást
-
-Eladáskor megadható, hogy melyik felvásárlásból ment az áru.
-
-### B) FIFO
-
-A rendszer automatikusan a legrégebbi készletet fogyasztja.
-
-### C) Átlagköltség
-
-A rendszer időszakonként átlagos beszerzési költséget számol.
-
-**Ezek közül jelenleg egyik sincs bevezetve.**
-
----
-
-# 19. Adatbázisra vonatkozó fontos szabály
-
-Az adatbázisban az eredeti tranzakciókat meg kell őrizni.
-
-Például két felvásárlást nem szabad azért összevonni, mert a frontend egy készletkártyán egyetlen csoportként mutatja őket.
-
-A frontend csoportosítása csak **megjelenítési és összesítési logika**.
-
-Az eredeti tranzakciós adatok maradjanak visszakereshetők.
-
----
-
-# 20. Biztonsági és élesítési megjegyzés
-
-A fejlesztés során használt alapértelmezett admin bejelentkezést (`admin` / `admin`) éles környezetben meg kell változtatni, ha az aktuális konfiguráció még ezt használja.
-
-Az adatbázis éles módosítása előtt mindig legyen mentés.
-
-A jelenlegi fejlesztési stratégia:
-
-1. frontend + backend együtt elkészül;
-2. lokális teszt;
-3. hibák javítása;
-4. ismételt teszt;
-5. csak ezután új backend publikálása;
-6. éles frontend/backend együtt ellenőrzése.
-
----
-
-# 21. Korábbi technikai korlátozások
-
-A fejlesztői környezetből korábban nem volt elérhető a NuGet.org, ezért a backend teljes `dotnet build` ellenőrzése nem minden fejlesztési lépésnél volt lehetséges.
-
-A frontend korábban `npm run build` segítségével ellenőrizve lett.
-
-Ha a helyi gépen a backend fordítása hibát jelez, a teljes hibaüzenetet kell visszaadni, és abból folytatni a javítást.
-
----
-
-# 22. Fejlesztési szabályok a folytatáshoz
-
-Ha a munkát később folytatjuk, először ezt a README-t kell alapul venni.
-
-Módosítás előtt mindig ellenőrizni kell:
-
-1. az aktuális `main` állapotot;
-2. az érintett backend controllert;
-3. az érintett Vue komponenst;
-4. az adatmodellt, ha adatkezelés változik;
-5. az API szerződést;
-6. hogy az új funkció nem vezet-e be véletlenül FIFO-t vagy más rejtett üzleti szabályt.
-
-Különösen fontos:
-
-> **A frontend csoportosítása nem jelent adatbázis-szintű összevonást.**
-
-> **Az eladás nem kapcsolódik automatikusan konkrét felvásárlási tételhez.**
-
-> **A felvásárlási ár jelenleg nem része a készletlogikának.**
-
-> **Nincs FIFO.**
-
----
-
-# 23. Aktuális „folytatási pont”
-
-A következő beszélgetésben a projektet innen kell folytatni:
-
-**„A jelenlegi `main` branch tartalmazza a lezárt fejlesztési szakaszt. Először a teljes lokális tesztet végezzük el, és csak a teszt közben talált hibákat javítjuk. Új készletértékelési vagy FIFO-logikát nem vezetünk be.”**
-
-Ez a mondat szándékosan szerepel itt, hogy később egyértelmű legyen a kiindulási állapot.
-
----
-
-# 24. Rövid állapotösszefoglaló
-
-**Projekt:** Piac / RekeszApp
-
-**Stack:** Vue 3 + Vite + ASP.NET Core .NET 8 + EF Core + MySQL
-
-**Branch:** `main`
-
-**Legutóbbi fontos commit:**
-
-`0415e44f3e8938d4b485a039d8ae96e0737a1ea0`
-
-**Állapot:** fejlesztési szakasz lezárva, teljes lokális teszt következik.
-
-**Készletmodell:**
-
-```text
-zöldség + rekesztípus + darabszám
-```
-
-**Nincs:**
-
-```text
-FIFO
-forrásallokáció
-készlet-vételár
-rejtett készletelosztás
-```
-
-**Következő feladat:**
-
-```text
-lokális frontend + backend indítás
-        ↓
-teljes funkcionális teszt
-        ↓
-hibák javítása
-        ↓
-új backend publikálása
-        ↓
-éles teszt
-```
