@@ -13,337 +13,75 @@ const ujVevoMod = ref(false)
 const form = ref({ vevoId:'', ujVevoNev:'', ujVevoMegjegyzes:'', zoldsegId:'', rekeszTipusId:'', mennyiseg:1, egysegar:'', fizetve:false, elvitte:false, visszahozottDb:0, hianyFizettDb:0, megjegyzes:'' })
 function clampDigits(v,n){const d=String(v??'').replace(/[^0-9]/g,'').slice(0,n);return d===''?'':Number(d)}
 function vevoLetrehozva(v){vevek.value.push(v)}
-
-// Mobil "Részletek" modal
 const showDetailModal = ref(false), detailItem = ref(null)
-
-// Maradék áru: kocsin maradt tétel átvitele másnapra
 const showAtvitelModal = ref(false), atvitelStock = ref(null), atvitelForm = ref({ celDatum: '', mennyiseg: 1 }), atvitelHiba = ref('')
-
 function today(){ return new Date().toISOString().slice(0,10) }
 function holnap(baseDatum){ const d = new Date(baseDatum + 'T00:00:00'); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10) }
 function fmtDate(d){ return new Date(d + 'T00:00:00').toLocaleDateString('hu-HU') }
 function fmtIdo(ido){ return new Date(ido).toLocaleTimeString('hu-HU',{hour:'2-digit',minute:'2-digit'}) }
 function vevoCimke(v){ return `${v.nev || '(névtelen)'}${v.megjegyzes ? ' — ' + v.megjegyzes : ''}` }
-
-async function torzsadatok(){
-  try { const [v,z,r]=await Promise.all([client.get('/vevek'),client.get('/zoldsegek'),client.get('/rekesztipusok')]); vevek.value=v.data; zoldsegek.value=z.data; rekesztipusok.value=r.data }
-  catch { hiba.value='Nem sikerült betölteni a törzsadatokat.' }
-}
-async function frissit(){
-  betolt.value=true; hiba.value=''
-  try {
-    const params={datum:datum.value}; if(keres.value.trim()) params.q=keres.value.trim()
-    const [e,k]=await Promise.all([client.get('/eladas',{params}),client.get('/riportok/keszlet',{params:{datum:datum.value}})])
-    items.value=e.data; keszlet.value=k.data.filter(x=>x.kocsinMaradt>0)
-  } catch { hiba.value='Nem sikerült betölteni az eladásokat vagy a kocsi készletét.' }
-  finally { betolt.value=false }
-}
-onMounted(async()=>{ await torzsadatok(); await frissit() })
-watch([datum, keres], ()=>frissit())
+async function torzsadatok(){try { const [v,z,r]=await Promise.all([client.get('/vevek'),client.get('/zoldsegek'),client.get('/rekesztipusok')]); vevek.value=v.data; zoldsegek.value=z.data; rekesztipusok.value=r.data } catch { hiba.value='Nem sikerült betölteni a törzsadatokat.' }}
+async function frissit(){betolt.value=true; hiba.value='';try {const params={datum:datum.value}; if(keres.value.trim()) params.q=keres.value.trim();const [e,k]=await Promise.all([client.get('/eladas',{params}),client.get('/riportok/keszlet',{params:{datum:datum.value}})]);items.value=e.data; keszlet.value=k.data.filter(x=>x.kocsinMaradt>0)} catch { hiba.value='Nem sikerült betölteni az eladásokat vagy a kocsi készletét.' } finally { betolt.value=false }}
+onMounted(async()=>{ await torzsadatok(); await frissit() });watch([datum, keres], ()=>frissit())
 watch(()=>form.value.zoldsegId,(id)=>{ const z=zoldsegek.value.find(x=>x.id===Number(id)); if(z?.alapertelmezettRekeszTipusId) form.value.rekeszTipusId=z.alapertelmezettRekeszTipusId })
-
 const napCim = computed(()=> datum.value===today() ? 'Mai eladások' : `${fmtDate(datum.value)} eladásai`)
-
-// Azonos vevőhöz (vevoId) tartozó eladások egy blokkba (keretbe) kerülnek, megőrizve az első
-// előfordulás sorrendjét. Csak akkor "grouped" (kap keretet), ha 2+ tétel tartozik ugyanahhoz
-// a vevőhöz - a névtelen (vevoId nélküli) tételek mindig önállóan, keret nélkül jelennek meg.
-const displayBlocks = computed(()=>{
-  const blocks=[]; const indexByVevo=new Map()
-  for(const item of items.value){
-    if(item.vevoId){
-      if(indexByVevo.has(item.vevoId)) blocks[indexByVevo.get(item.vevoId)].items.push(item)
-      else { indexByVevo.set(item.vevoId, blocks.length); blocks.push({vevoId:item.vevoId, vevoNev:item.vevoNev, items:[item]}) }
-    } else blocks.push({vevoId:null, vevoNev:null, items:[item]})
-  }
-  return blocks.map(b=>({...b, grouped: b.vevoId!==null && b.items.length>1}))
-})
-function groupTartozasFt(block){ return block.items.filter(i=>!i.fizetve).reduce((sum,i)=>sum+(i.mennyiseg*(i.egysegar||0)),0) }
+const displayBlocks = computed(()=>{const blocks=[]; const indexByVevo=new Map();for(const item of items.value){if(item.vevoId){if(indexByVevo.has(item.vevoId)) blocks[indexByVevo.get(item.vevoId)].items.push(item);else { indexByVevo.set(item.vevoId, blocks.length); blocks.push({vevoId:item.vevoId, vevoNev:item.vevoNev, items:[item]}) }} else blocks.push({vevoId:null, vevoNev:null, items:[item]})}return blocks.map(b=>({...b, grouped: b.vevoId!==null && b.items.length>1}))})
+function itemTartozasFt(item){ return item.fizetve ? 0 : (item.egysegar != null ? item.mennyiseg * Number(item.egysegar) : 0) }
+function groupTartozasFt(block){ return block.items.reduce((sum,i)=>sum+itemTartozasFt(i),0) }
 function groupRekeszTartozas(block){ return block.items.reduce((sum,i)=>sum+Math.max(0, hiany(i)-(i.hianyFizettDb||0)), 0) }
 async function csoportMindFizetve(block){ for(const item of block.items.filter(i=>!i.fizetve)) await allapot(item,'fizetve',true) }
 async function csoportMindenRekeszHozott(block){ for(const item of block.items.filter(i=>!vhRekesz(i))) await vhRekeszValt(item,true) }
-
 const apiRoot = client.defaults.baseURL.replace(/\/api\/?$/, '')
-function csempeStilus(stock){
-  const z = zoldsegek.value.find(x=>x.id===stock.zoldsegId)
-  if (!z?.kepUrl) return {}
-  const url = z.kepUrl.startsWith('http') ? z.kepUrl : apiRoot + z.kepUrl
-  return { backgroundImage: `url('${url}')`, backgroundSize: 'cover', backgroundPosition: 'center' }
-}
-function zoldsegKep(zoldsegId){
-  const z = zoldsegek.value.find(x=>x.id===zoldsegId)
-  if (!z?.kepUrl) return null
-  return z.kepUrl.startsWith('http') ? z.kepUrl : apiRoot + z.kepUrl
-}
-
-function nyitEladas(stock){
-  selectedStock.value=stock; ujVevoMod.value=false
-  form.value={vevoId:'',ujVevoNev:'',ujVevoMegjegyzes:'',zoldsegId:stock.zoldsegId,rekeszTipusId:stock.rekeszTipusId,mennyiseg:1,egysegar:'',fizetve:false,elvitte:false,visszahozottDb:0,hianyFizettDb:0,megjegyzes:''}
-  showEladasModal.value=true
-}
+function csempeStilus(stock){const z=zoldsegek.value.find(x=>x.id===stock.zoldsegId);if(!z?.kepUrl)return {};const url=z.kepUrl.startsWith('http')?z.kepUrl:apiRoot+z.kepUrl;return { backgroundImage: `url('${url}')`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+function zoldsegKep(zoldsegId){const z=zoldsegek.value.find(x=>x.id===zoldsegId);if(!z?.kepUrl)return null;return z.kepUrl.startsWith('http')?z.kepUrl:apiRoot+z.kepUrl}
+function nyitEladas(stock){selectedStock.value=stock; ujVevoMod.value=false;form.value={vevoId:'',ujVevoNev:'',ujVevoMegjegyzes:'',zoldsegId:stock.zoldsegId,rekeszTipusId:stock.rekeszTipusId,mennyiseg:1,egysegar:'',fizetve:false,elvitte:false,visszahozottDb:0,hianyFizettDb:0,megjegyzes:''};showEladasModal.value=true}
 function zarEladas(){ showEladasModal.value=false; selectedStock.value=null }
-async function ujTetel(){
-  hiba.value=''
-  if(!form.value.zoldsegId||!form.value.rekeszTipusId) return hiba.value='Zöldség és rekesztípus kiválasztása kötelező.'
-  if(!form.value.mennyiseg||Number(form.value.mennyiseg)<=0) return hiba.value='A mennyiség legalább 1 kell legyen.'
-  if(form.value.egysegar===''||Number(form.value.egysegar)<=0) return hiba.value='Az egységár megadása kötelező.'
-  if(selectedStock.value && Number(form.value.mennyiseg)>Number(selectedStock.value.kocsinMaradt)) return hiba.value='Nem adható el több, mint amennyi a kocsin van.'
-  if(Number(form.value.visszahozottDb)>Number(form.value.mennyiseg)) return hiba.value='A visszahozott rekesz nem lehet több az eladott mennyiségnél.'
-  try{
-    await client.post('/eladas',{vevoId:ujVevoMod.value?null:(form.value.vevoId||null),ujVevoNev:ujVevoMod.value?(form.value.ujVevoNev.trim()||null):null,ujVevoMegjegyzes:ujVevoMod.value?(form.value.ujVevoMegjegyzes.trim()||null):null,zoldsegId:Number(form.value.zoldsegId),rekeszTipusId:Number(form.value.rekeszTipusId),mennyiseg:Number(form.value.mennyiseg),egysegar:form.value.egysegar===''?null:Number(form.value.egysegar),fizetve:form.value.fizetve,elvitte:form.value.elvitte,visszahozottDb:Number(form.value.visszahozottDb)||0,hianyFizettDb:Number(form.value.hianyFizettDb)||0,megjegyzes:form.value.megjegyzes.trim()||null,datum:datum.value})
-    zarEladas(); await frissit()
-  }catch(e){ hiba.value=e.response?.data?.message||'Mentés sikertelen.' }
-}
-
-function szerkesztesInditasa(item){ editId.value=item.id; editForm.value={vevoId:item.vevoId||'',zoldsegId:item.zoldsegId,rekeszTipusId:item.rekeszTipusId,mennyiseg:item.mennyiseg,egysegar:item.egysegar??'',fizetve:item.fizetve,elvitte:item.elvitte,visszahozottDb:item.visszahozottDb,hianyFizettDb:item.hianyFizettDb,megjegyzes:item.megjegyzes||''}; showDetailModal.value=false }
-async function mentSzerkesztes(id){ try{ await client.put(`/eladas/${id}`,{vevoId:editForm.value.vevoId||null,ujVevoNev:null,ujVevoMegjegyzes:null,zoldsegId:Number(editForm.value.zoldsegId),rekeszTipusId:Number(editForm.value.rekeszTipusId),mennyiseg:Number(editForm.value.mennyiseg),egysegar:editForm.value.egysegar===''?null:Number(editForm.value.egysegar),fizetve:editForm.value.fizetve,elvitte:editForm.value.elvitte,visszahozottDb:Number(editForm.value.visszahozottDb)||0,hianyFizettDb:Number(editForm.value.hianyFizettDb)||0,megjegyzes:editForm.value.megjegyzes.trim()||null,datum:datum.value}); editId.value=null; await frissit() }catch(e){ hiba.value=e.response?.data?.message||'Mentés sikertelen.' } }
-async function allapot(item,mezo,ertek){ try{ await client.patch(`/eladas/${item.id}/allapot`,{[mezo]:ertek}); item[mezo]=ertek }catch(e){ hiba.value=e.response?.data?.message||'Állapotváltás sikertelen.'; await frissit() } }
-async function torol(item){ if(!confirm(`Törlöd a #${item.napiSorszam} tételt (${item.zoldsegNev})?`))return; try{await client.delete(`/eladas/${item.id}`);await frissit(); showDetailModal.value=false}catch{hiba.value='Törlés sikertelen.'} }
-
-// "Vh. Rekesz" gyorsjelölő: bejelölve a teljes eladott mennyiség visszahozottnak számít, az input inaktív.
-function vhRekesz(item){ return item.visszahozottDb === item.mennyiseg }
-async function vhRekeszValt(item, checked){
-  if(checked){ await allapot(item,'visszahozottDb',item.mennyiseg); if(item.hianyFizettDb>0) await allapot(item,'hianyFizettDb',0) }
-  else { await allapot(item,'visszahozottDb',0) }
-}
-function hiany(item){ return item.mennyiseg - item.visszahozottDb }
-
-function nyitDetail(item){ detailItem.value=item; showDetailModal.value=true }
-function zarDetail(){ showDetailModal.value=false; detailItem.value=null }
-
-// Maradék áru: kocsin maradt tétel átvitele másnapra
-function nyitAtvitel(stock){ atvitelStock.value=stock; atvitelForm.value={ celDatum: holnap(datum.value), mennyiseg: stock.kocsinMaradt }; atvitelHiba.value=''; showAtvitelModal.value=true }
-function zarAtvitel(){ showAtvitelModal.value=false; atvitelStock.value=null }
-async function mentAtvitel(){
-  atvitelHiba.value=''
-  if(!atvitelForm.value.celDatum) return atvitelHiba.value='Válaszd ki a célnapot.'
-  if(!atvitelForm.value.mennyiseg||Number(atvitelForm.value.mennyiseg)<=0) return atvitelHiba.value='A mennyiség legalább 1 kell legyen.'
-  try{
-    await client.post('/felvasarlas/atvitel',{zoldsegId:atvitelStock.value.zoldsegId,rekeszTipusId:atvitelStock.value.rekeszTipusId,mennyiseg:Number(atvitelForm.value.mennyiseg),celDatum:atvitelForm.value.celDatum})
-    zarAtvitel(); await frissit()
-  }catch(e){ atvitelHiba.value=e.response?.data?.message||'Átvitel sikertelen.' }
-}
+async function ujTetel(){hiba.value='';if(!form.value.zoldsegId||!form.value.rekeszTipusId)return hiba.value='Zöldség és rekesztípus kiválasztása kötelező.';if(!form.value.mennyiseg||Number(form.value.mennyiseg)<=0)return hiba.value='A mennyiség legalább 1 kell legyen.';if(form.value.egysegar===''||Number(form.value.egysegar)<=0)return hiba.value='Az egységár megadása kötelező.';if(selectedStock.value&&Number(form.value.mennyiseg)>Number(selectedStock.value.kocsinMaradt))return hiba.value='Nem adható el több, mint amennyi a kocsin van.';if(Number(form.value.visszahozottDb)>Number(form.value.mennyiseg))return hiba.value='A visszahozott rekesz nem lehet több az eladott mennyiségnél.';try{await client.post('/eladas',{vevoId:ujVevoMod.value?null:(form.value.vevoId||null),ujVevoNev:ujVevoMod.value?(form.value.ujVevoNev.trim()||null):null,ujVevoMegjegyzes:ujVevoMod.value?(form.value.ujVevoMegjegyzes.trim()||null):null,zoldsegId:Number(form.value.zoldsegId),rekeszTipusId:Number(form.value.rekeszTipusId),mennyiseg:Number(form.value.mennyiseg),egysegar:form.value.egysegar===''?null:Number(form.value.egysegar),fizetve:form.value.fizetve,elvitte:form.value.elvitte,visszahozottDb:Number(form.value.visszahozottDb)||0,hianyFizettDb:Number(form.value.hianyFizettDb)||0,megjegyzes:form.value.megjegyzes.trim()||null,datum:datum.value});zarEladas();await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
+function szerkesztesInditasa(item){editId.value=item.id;editForm.value={vevoId:item.vevoId||'',zoldsegId:item.zoldsegId,rekeszTipusId:item.rekeszTipusId,mennyiseg:item.mennyiseg,egysegar:item.egysegar??'',fizetve:item.fizetve,elvitte:item.elvitte,visszahozottDb:item.visszahozottDb,hianyFizettDb:item.hianyFizettDb,megjegyzes:item.megjegyzes||''};showDetailModal.value=false}
+async function mentSzerkesztes(id){try{await client.put(`/eladas/${id}`,{vevoId:editForm.value.vevoId||null,ujVevoNev:null,ujVevoMegjegyzes:null,zoldsegId:Number(editForm.value.zoldsegId),rekeszTipusId:Number(editForm.value.rekeszTipusId),mennyiseg:Number(editForm.value.mennyiseg),egysegar:editForm.value.egysegar===''?null:Number(editForm.value.egysegar),fizetve:editForm.value.fizetve,elvitte:editForm.value.elvitte,visszahozottDb:Number(editForm.value.visszahozottDb)||0,hianyFizettDb:Number(editForm.value.hianyFizettDb)||0,megjegyzes:editForm.value.megjegyzes.trim()||null,datum:datum.value});editId.value=null;await frissit()}catch(e){hiba.value=e.response?.data?.message||'Mentés sikertelen.'}}
+async function allapot(item,mezo,ertek){try{await client.patch(`/eladas/${item.id}/allapot`,{[mezo]:ertek});item[mezo]=ertek}catch(e){hiba.value=e.response?.data?.message||'Állapotváltás sikertelen.';await frissit()}}
+async function torol(item){if(!confirm(`Törlöd a #${item.napiSorszam} tételt (${item.zoldsegNev})?`))return;try{await client.delete(`/eladas/${item.id}`);await frissit();showDetailModal.value=false}catch{hiba.value='Törlés sikertelen.'}}
+function vhRekesz(item){return item.visszahozottDb===item.mennyiseg}
+async function vhRekeszValt(item,checked){if(checked){await allapot(item,'visszahozottDb',item.mennyiseg);if(item.hianyFizettDb>0)await allapot(item,'hianyFizettDb',0)}else{await allapot(item,'visszahozottDb',0)}}
+function hiany(item){return item.mennyiseg-item.visszahozottDb}
+function nyitDetail(item){detailItem.value=item;showDetailModal.value=true}
+function zarDetail(){showDetailModal.value=false;detailItem.value=null}
+function nyitAtvitel(stock){atvitelStock.value=stock;atvitelForm.value={celDatum:holnap(datum.value),mennyiseg:stock.kocsinMaradt};atvitelHiba.value='';showAtvitelModal.value=true}
+function zarAtvitel(){showAtvitelModal.value=false;atvitelStock.value=null}
+async function mentAtvitel(){atvitelHiba.value='';if(!atvitelForm.value.celDatum)return atvitelHiba.value='Válaszd ki a célnapot.';if(!atvitelForm.value.mennyiseg||Number(atvitelForm.value.mennyiseg)<=0)return atvitelHiba.value='A mennyiség legalább 1 kell legyen.';try{await client.post('/felvasarlas/atvitel',{zoldsegId:atvitelStock.value.zoldsegId,rekeszTipusId:atvitelStock.value.rekeszTipusId,mennyiseg:Number(atvitelForm.value.mennyiseg),celDatum:atvitelForm.value.celDatum});zarAtvitel();await frissit()}catch(e){atvitelHiba.value=e.response?.data?.message||'Átvitel sikertelen.'}}
 </script>
 
 <template>
-  <div class="toolbar">
-    <div class="toolbar-row">
-      <label class="date-picker">📅 Dátum <input v-model="datum" type="date" /></label>
-      <label class="search">🔎 Keresés <input v-model="keres" placeholder="Vevő neve, napi sorszám vagy zöldség" /></label>
-    </div>
-  </div>
-
-  <section class="card stock-card">
-    <div class="section-head"><div><h2>Kocsin lévő termékek</h2><p class="muted">Válassz egy terméket az eladás rögzítéséhez, vagy vidd át másnapra.</p></div><span v-if="datum!==today()" class="date-badge">{{ fmtDate(datum) }}</span></div>
-    <p v-if="betolt">Betöltés…</p>
-    <div v-else class="stock-grid">
-      <div v-for="s in keszlet" :key="`${s.zoldsegId}-${s.rekeszTipusId}`" class="stock-tile" :class="{'has-photo': zoldsegek.find(x=>x.id===s.zoldsegId)?.kepUrl}">
-        <button class="stock-tile-main" @click="nyitEladas(s)">
-          <div class="stock-tile-photo" :style="csempeStilus(s)">
-            <span class="stock-tile-strip"><strong>{{ s.zoldsegNev }}</strong><span>{{ s.kocsinMaradt }}</span></span>
-          </div>
-        </button>
-        <button class="stock-tile-atvitel" @click="nyitAtvitel(s)">📅 Átviszem másnapra</button>
-      </div>
-      <div v-if="!keszlet.length" class="empty-stock">A kiválasztott napra nincs kocsin maradt áru.</div>
-    </div>
-  </section>
-
-  <section class="card history-card">
-    <div class="section-head"><h2>{{ napCim }}</h2><span class="muted">{{ items.length }} találat</span></div>
-    <div v-if="betolt">Betöltés…</div>
-    <template v-else>
-
-    <!-- Desktop / tablet: táblázat -->
-    <div class="table-wrap desktop-only">
-      <table><thead><tr><th>Vevő</th><th>Zöldség</th><th>Ár</th><th>Db</th><th>Fiz.</th><th>Elv.</th><th>Vh. rek.</th><th>Vissza</th><th>Hiány fiz.</th><th>Idő</th><th>#</th><th></th></tr></thead>
-      <tbody>
+  <div class="toolbar"><div class="toolbar-row"><label class="date-picker">📅 Dátum <input v-model="datum" type="date" /></label><label class="search">🔎 Keresés <input v-model="keres" placeholder="Vevő neve, napi sorszám vagy zöldség" /></label></div></div>
+  <section class="card stock-card"><div class="section-head"><div><h2>Kocsin lévő termékek</h2><p class="muted">Válassz egy terméket az eladás rögzítéséhez, vagy vidd át másnapra.</p></div><span v-if="datum!==today()" class="date-badge">{{ fmtDate(datum) }}</span></div><p v-if="betolt">Betöltés…</p><div v-else class="stock-grid"><div v-for="s in keszlet" :key="`${s.zoldsegId}-${s.rekeszTipusId}`" class="stock-tile" :class="{'has-photo': zoldsegek.find(x=>x.id===s.zoldsegId)?.kepUrl}"><button class="stock-tile-main" @click="nyitEladas(s)"><div class="stock-tile-photo" :style="csempeStilus(s)"><span class="stock-tile-strip"><strong>{{ s.zoldsegNev }}</strong><span>{{ s.kocsinMaradt }}</span></span></div></button><button class="stock-tile-atvitel" @click="nyitAtvitel(s)">📅 Átviszem másnapra</button></div><div v-if="!keszlet.length" class="empty-stock">A kiválasztott napra nincs kocsin maradt áru.</div></div></section>
+  <section class="card history-card"><div class="section-head"><h2>{{ napCim }}</h2><span class="muted">{{ items.length }} találat</span></div><div v-if="betolt">Betöltés…</div><template v-else>
+    <div class="table-wrap desktop-only"><table><thead><tr><th>Vevő</th><th>Zöldség</th><th>Ár</th><th>Db</th><th>Fiz.</th><th>Elv.</th><th>Vh. rek.</th><th>Vissza</th><th>Hiány fiz.</th><th>Tartozás</th><th>Idő</th><th>#</th><th></th></tr></thead><tbody>
       <template v-for="block in displayBlocks" :key="'d'+block.items[0].id">
-        <tr v-if="block.grouped" class="group-header-row"><td colspan="12">
-          <div class="group-header">
-            <strong>{{block.vevoNev||'(névtelen)'}}</strong>
-            <div class="group-badges">
-              <span v-if="groupTartozasFt(block)>0" class="badge warn">Tartozás: {{groupTartozasFt(block)}} Ft</span>
-              <span v-if="groupRekeszTartozas(block)>0" class="badge warn">{{groupRekeszTartozas(block)}} rekesz tartozás</span>
-              <span v-if="groupTartozasFt(block)===0 && groupRekeszTartozas(block)===0" class="badge ok">Rendezve</span>
-            </div>
-            <div class="group-actions">
-              <button v-if="groupTartozasFt(block)>0" type="button" class="link-btn" @click="csoportMindFizetve(block)">✅ Mind fizetve</button>
-              <button v-if="groupRekeszTartozas(block)>0" type="button" class="link-btn" @click="csoportMindenRekeszHozott(block)">✅ Minden rekesz hozott</button>
-            </div>
-          </div>
-        </td></tr>
+        <tr v-if="block.grouped" class="group-header-row"><td colspan="13"><div class="group-header"><strong>{{block.vevoNev||'(névtelen)'}}</strong><div class="group-badges"><span v-if="groupTartozasFt(block)>0" class="badge warn">Tartozás: {{groupTartozasFt(block)}} Ft</span><span v-if="groupRekeszTartozas(block)>0" class="badge warn">{{groupRekeszTartozas(block)}} rekesz tartozás</span><span v-if="groupTartozasFt(block)===0&&groupRekeszTartozas(block)===0" class="badge ok">Rendezve</span></div><div class="group-actions"><button v-if="groupTartozasFt(block)>0" type="button" class="link-btn" @click="csoportMindFizetve(block)">✅ Mind fizetve</button><button v-if="groupRekeszTartozas(block)>0" type="button" class="link-btn" @click="csoportMindenRekeszHozott(block)">✅ Minden rekesz hozott</button></div></div></td></tr>
         <tr v-for="item in block.items" :key="item.id" :class="{'grouped-row':block.grouped}">
-          <template v-if="editId===item.id">
-            <td><select v-model="editForm.vevoId"><option value="">—</option><option v-for="v in vevek" :key="v.id" :value="v.id">{{vevoCimke(v)}}</option></select></td>
-            <td><select v-model="editForm.zoldsegId"><option v-for="z in zoldsegek" :key="z.id" :value="z.id">{{z.nev}}</option></select></td>
-            <td><input class="price-input" v-model="editForm.egysegar" type="number" min="0" step="0.01" /></td>
-            <td><input v-model="editForm.mennyiseg" type="number" min="1" /></td>
-            <td><input v-model="editForm.fizetve" type="checkbox" /></td><td><input v-model="editForm.elvitte" type="checkbox" /></td>
-            <td><input :checked="editForm.visszahozottDb===editForm.mennyiseg" @change="editForm.visszahozottDb=$event.target.checked?editForm.mennyiseg:0" type="checkbox" /></td>
-            <td><input v-model="editForm.visszahozottDb" type="number" min="0" :max="editForm.mennyiseg" :disabled="editForm.visszahozottDb===editForm.mennyiseg" /></td>
-            <td><input v-model="editForm.hianyFizettDb" type="number" min="0" :max="editForm.mennyiseg-editForm.visszahozottDb" /></td>
-            <td>{{fmtIdo(item.ido)}}</td><td>#{{item.napiSorszam}}</td>
-            <td><button class="icon" @click="mentSzerkesztes(item.id)">✓</button><button class="icon" @click="editId=null">✕</button></td>
-          </template>
-          <template v-else>
-            <td>{{item.vevoNev||'(névtelen)'}}</td><td>{{item.zoldsegNev}}</td><td>{{item.egysegar!=null?item.egysegar+' Ft':'—'}}</td><td>{{item.mennyiseg}} <small class="muted">{{item.rekeszTipus}}</small></td>
-            <td><input type="checkbox" :checked="item.fizetve" @change="allapot(item,'fizetve',$event.target.checked)" /></td>
-            <td><input type="checkbox" :checked="item.elvitte" @change="allapot(item,'elvitte',$event.target.checked)" /></td>
-            <td><input type="checkbox" :checked="vhRekesz(item)" @change="vhRekeszValt(item,$event.target.checked)" /></td>
-            <td><input type="number" min="0" :max="item.mennyiseg" :value="item.visszahozottDb" :disabled="vhRekesz(item)" @change="allapot(item,'visszahozottDb',Number($event.target.value))" /></td>
-            <td><input type="number" min="0" :max="hiany(item)" :value="item.hianyFizettDb" @change="allapot(item,'hianyFizettDb',Number($event.target.value))" /></td>
-            <td>{{fmtIdo(item.ido)}}</td><td>#{{item.napiSorszam}}</td>
-            <td><button class="icon" @click="szerkesztesInditasa(item)">✏️</button><button class="icon" @click="torol(item)">🗑️</button></td>
-          </template>
+          <template v-if="editId===item.id"><td><select v-model="editForm.vevoId"><option value="">—</option><option v-for="v in vevek" :key="v.id" :value="v.id">{{vevoCimke(v)}}</option></select></td><td><select v-model="editForm.zoldsegId"><option v-for="z in zoldsegek" :key="z.id" :value="z.id">{{z.nev}}</option></select></td><td><input class="price-input" v-model="editForm.egysegar" type="number" min="0" step="0.01" /></td><td><input v-model="editForm.mennyiseg" type="number" min="1" /></td><td><input v-model="editForm.fizetve" type="checkbox" /></td><td><input v-model="editForm.elvitte" type="checkbox" /></td><td><input :checked="editForm.visszahozottDb===editForm.mennyiseg" @change="editForm.visszahozottDb=$event.target.checked?editForm.mennyiseg:0" type="checkbox" /></td><td><input v-model="editForm.visszahozottDb" type="number" min="0" :max="editForm.mennyiseg" :disabled="editForm.visszahozottDb===editForm.mennyiseg" /></td><td><input v-model="editForm.hianyFizettDb" type="number" min="0" :max="editForm.mennyiseg-editForm.visszahozottDb" /></td><td>—</td><td>{{fmtIdo(item.ido)}}</td><td>#{{item.napiSorszam}}</td><td><button class="icon" @click="mentSzerkesztes(item.id)">✓</button><button class="icon" @click="editId=null">✕</button></td></template>
+          <template v-else><td>{{item.vevoNev||'(névtelen)'}}</td><td>{{item.zoldsegNev}}</td><td>{{item.egysegar!=null?item.egysegar+' Ft':'—'}}</td><td>{{item.mennyiseg}} <small class="muted">{{item.rekeszTipus}}</small></td><td><input type="checkbox" :checked="item.fizetve" @change="allapot(item,'fizetve',$event.target.checked)" /></td><td><input type="checkbox" :checked="item.elvitte" @change="allapot(item,'elvitte',$event.target.checked)" /></td><td><input type="checkbox" :checked="vhRekesz(item)" @change="vhRekeszValt(item,$event.target.checked)" /></td><td><input type="number" min="0" :max="item.mennyiseg" :value="item.visszahozottDb" :disabled="vhRekesz(item)" @change="allapot(item,'visszahozottDb',Number($event.target.value))" /></td><td><input type="number" min="0" :max="hiany(item)" :value="item.hianyFizettDb" @change="allapot(item,'hianyFizettDb',Number($event.target.value))" /></td><td><span v-if="itemTartozasFt(item)>0" class="badge warn">{{itemTartozasFt(item)}} Ft</span><span v-if="hiany(item)-Number(item.hianyFizettDb||0)>0" class="badge warn">{{hiany(item)-Number(item.hianyFizettDb||0)}} rekesz</span><span v-if="itemTartozasFt(item)===0&&hiany(item)-Number(item.hianyFizettDb||0)<=0" class="badge ok">Rendezve</span></td><td>{{fmtIdo(item.ido)}}</td><td>#{{item.napiSorszam}}</td><td><button class="icon" @click="szerkesztesInditasa(item)">✏️</button><button class="icon" @click="torol(item)">🗑️</button></td></template>
         </tr>
-      </template>
-      <tr v-if="!items.length"><td colspan="12" class="ures">Nincs a keresésnek megfelelő eladás.</td></tr></tbody></table>
-    </div>
-
-    <!-- Mobil: csempés lista, csoportosítva vevőnként, Részletek modal -->
-    <div class="mobile-list mobile-only">
-      <template v-for="block in displayBlocks" :key="'m'+block.items[0].id">
-        <div v-if="block.grouped" class="group-frame">
-          <div class="group-header">
-            <strong>{{block.vevoNev||'(névtelen)'}}</strong>
-            <div class="group-badges">
-              <span v-if="groupTartozasFt(block)>0" class="badge warn">Tartozás: {{groupTartozasFt(block)}} Ft</span>
-              <span v-if="groupRekeszTartozas(block)>0" class="badge warn">{{groupRekeszTartozas(block)}} rekesz tartozás</span>
-              <span v-if="groupTartozasFt(block)===0 && groupRekeszTartozas(block)===0" class="badge ok">Rendezve</span>
-            </div>
-            <div class="group-actions">
-              <button v-if="groupTartozasFt(block)>0" type="button" class="link-btn" @click="csoportMindFizetve(block)">✅ Mind fizetve</button>
-              <button v-if="groupRekeszTartozas(block)>0" type="button" class="link-btn" @click="csoportMindenRekeszHozott(block)">✅ Minden rekesz hozott</button>
-            </div>
-          </div>
-          <button v-for="item in block.items" :key="item.id" class="mobile-tile grouped-tile" @click="nyitDetail(item)">
-            <div class="mobile-tile-row"><span class="zoldseg-nev"><img v-if="zoldsegKep(item.zoldsegId)" :src="zoldsegKep(item.zoldsegId)" class="mini-thumb" alt="" />{{item.zoldsegNev}}</span><span class="mobile-tile-time">{{fmtIdo(item.ido)}}</span></div>
-            <div class="mobile-tile-row"><span>{{item.mennyiseg}} {{item.rekeszTipus}}</span><span>{{item.egysegar!=null?item.egysegar+' Ft':'—'}}</span></div>
-            <div class="mobile-tile-badges">
-              <span :class="['badge',item.fizetve?'ok':'nok']">{{item.fizetve?'Fizetve':'Nincs fizetve'}}</span>
-              <span :class="['badge',item.elvitte?'ok':'nok']">{{item.elvitte?'Elvitte':'Nem vitte el'}}</span>
-              <span v-if="hiany(item)>0" class="badge warn">{{hiany(item)}} rekesz hiány</span>
-            </div>
-          </button>
-        </div>
-        <button v-else class="mobile-tile" @click="nyitDetail(block.items[0])">
-          <div class="mobile-tile-row"><strong>{{block.items[0].vevoNev||'(névtelen)'}}</strong><span class="mobile-tile-time">{{fmtIdo(block.items[0].ido)}}</span></div>
-          <div class="mobile-tile-row"><span class="zoldseg-nev"><img v-if="zoldsegKep(block.items[0].zoldsegId)" :src="zoldsegKep(block.items[0].zoldsegId)" class="mini-thumb" alt="" />{{block.items[0].zoldsegNev}}</span><span>{{block.items[0].mennyiseg}} {{block.items[0].rekeszTipus}}</span></div>
-          <div class="mobile-tile-badges">
-            <span :class="['badge',block.items[0].fizetve?'ok':'nok']">{{block.items[0].fizetve?'Fizetve':'Nincs fizetve'}}</span>
-            <span :class="['badge',block.items[0].elvitte?'ok':'nok']">{{block.items[0].elvitte?'Elvitte':'Nem vitte el'}}</span>
-            <span v-if="hiany(block.items[0])>0" class="badge warn">{{hiany(block.items[0])}} rekesz hiány</span>
-          </div>
-        </button>
-      </template>
-      <div v-if="!items.length" class="empty-stock">Nincs a keresésnek megfelelő eladás.</div>
-    </div>
-    </template>
-  </section>
-
-  <!-- Új eladás modal -->
-  <div v-if="showEladasModal" class="overlay" @click.self="zarEladas">
-    <div class="sale-modal card">
-      <div class="modal-head"><div><h2>{{selectedStock?.zoldsegNev}} — eladás</h2><div class="stock-info">Kocsin: <strong>{{selectedStock?.kocsinMaradt}}</strong> rekesz · {{selectedStock?.rekeszTipus}}</div></div><button class="icon close" @click="zarEladas">✕</button></div>
-      <label class="checkbox"><input v-model="ujVevoMod" type="checkbox" /> Új / alkalmi vevő</label>
-      <label v-if="!ujVevoMod">Vevő (opcionális)<Gyorskereso v-model="form.vevoId" :items="vevek" post-path="/vevek" mentes-label="Vevő mentése" @created="vevoLetrehozva" /></label>
-      <div v-else class="row"><label>Név / azonosító<input v-model="form.ujVevoNev" placeholder="pl. rendszám" /></label><label>Megjegyzés<input v-model="form.ujVevoMegjegyzes" /></label></div>
-      <div class="row"><label>Mennyit vett<input :value="form.mennyiseg" @input="form.mennyiseg=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label><label>Egységár (Ft/db)<input :value="form.egysegar" @input="form.egysegar=clampDigits($event.target.value,5)" inputmode="numeric" pattern="[0-9]*" class="narrow-5" /></label></div>
-      <div class="row">
-        <button type="button" class="toggle-pill" :class="{active:form.fizetve}" @click="form.fizetve=!form.fizetve">{{form.fizetve?'✅ Fizette':'⬜ Fizette'}}</button>
-        <button type="button" class="toggle-pill" :class="{active:form.elvitte}" @click="form.elvitte=!form.elvitte">{{form.elvitte?'✅ Elvitte':'⬜ Elvitte'}}</button>
+      </template><tr v-if="!items.length"><td colspan="13" class="ures">Nincs a keresésnek megfelelő eladás.</td></tr></tbody></table></div>
+    <div class="mobile-list mobile-only"><template v-for="block in displayBlocks" :key="'m'+block.items[0].id">
+      <div v-if="block.grouped" class="group-frame"><div class="group-header"><strong>{{block.vevoNev||'(névtelen)'}}</strong><div class="group-badges"><span v-if="groupTartozasFt(block)>0" class="badge warn">Tartozás: {{groupTartozasFt(block)}} Ft</span><span v-if="groupRekeszTartozas(block)>0" class="badge warn">{{groupRekeszTartozas(block)}} rekesz tartozás</span><span v-if="groupTartozasFt(block)===0&&groupRekeszTartozas(block)===0" class="badge ok">Rendezve</span></div><div class="group-actions"><button v-if="groupTartozasFt(block)>0" type="button" class="link-btn" @click="csoportMindFizetve(block)">✅ Mind fizetve</button><button v-if="groupRekeszTartozas(block)>0" type="button" class="link-btn" @click="csoportMindenRekeszHozott(block)">✅ Minden rekesz hozott</button></div></div>
+        <button v-for="item in block.items" :key="item.id" class="mobile-tile grouped-tile" @click="nyitDetail(item)"><div class="mobile-tile-row"><span class="zoldseg-nev"><img v-if="zoldsegKep(item.zoldsegId)" :src="zoldsegKep(item.zoldsegId)" class="mini-thumb" alt="" />{{item.zoldsegNev}}</span><span class="mobile-tile-time">{{fmtIdo(item.ido)}}</span></div><div class="mobile-tile-row"><span>{{item.mennyiseg}} {{item.rekeszTipus}}</span><span>{{item.egysegar!=null?item.egysegar+' Ft':'—'}}</span></div><div class="mobile-tile-badges"><span :class="['badge',item.fizetve?'ok':'nok']">{{item.fizetve?'Fizetve':'Nincs fizetve'}}</span><span :class="['badge',item.elvitte?'ok':'nok']">{{item.elvitte?'Elvitte':'Nem vitte el'}}</span><span v-if="itemTartozasFt(item)>0" class="badge warn">Tartozás: {{itemTartozasFt(item)}} Ft</span><span v-if="hiany(item)-Number(item.hianyFizettDb||0)>0" class="badge warn">{{hiany(item)-Number(item.hianyFizettDb||0)}} rekesz tartozás</span><span v-if="itemTartozasFt(item)===0&&hiany(item)-Number(item.hianyFizettDb||0)<=0" class="badge ok">Rendezve</span></div></button>
       </div>
-      <button type="button" class="toggle-pill wide" :class="{active:form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''}" @click="form.visszahozottDb=(form.visszahozottDb===Number(form.mennyiseg)?0:Number(form.mennyiseg))">{{form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''?'✅ Minden rekeszt hozott':'⬜ Minden rekeszt hozott'}}</button>
-      <div class="row"><label>Rekeszt hozott<input :value="form.visszahozottDb" @input="form.visszahozottDb=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" :disabled="form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''" /></label><label>Hiányból kifizetett (db)<input :value="form.hianyFizettDb" @input="form.hianyFizettDb=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label></div>
-      <label>Megjegyzés (opcionális)<input v-model="form.megjegyzes" placeholder="pl. később jön az áruért" /></label>
-      <p v-if="hiba" class="hiba">{{hiba}}</p><button class="btn-primary save" @click="ujTetel">Eladás mentése</button>
-      <div class="torzsadat-linkek"><button type="button" class="link-btn" @click="showVevoModal=true">Vevők kezelése</button></div>
-    </div>
-  </div>
+      <button v-else class="mobile-tile" @click="nyitDetail(block.items[0])"><div class="mobile-tile-row"><strong>{{block.items[0].vevoNev||'(névtelen)'}}</strong><span class="mobile-tile-time">{{fmtIdo(block.items[0].ido)}}</span></div><div class="mobile-tile-row"><span class="zoldseg-nev"><img v-if="zoldsegKep(block.items[0].zoldsegId)" :src="zoldsegKep(block.items[0].zoldsegId)" class="mini-thumb" alt="" />{{block.items[0].zoldsegNev}}</span><span>{{block.items[0].mennyiseg}} {{block.items[0].rekeszTipus}}</span></div><div class="mobile-tile-badges"><span :class="['badge',block.items[0].fizetve?'ok':'nok']">{{block.items[0].fizetve?'Fizetve':'Nincs fizetve'}}</span><span :class="['badge',block.items[0].elvitte?'ok':'nok']">{{block.items[0].elvitte?'Elvitte':'Nem vitte el'}}</span><span v-if="itemTartozasFt(block.items[0])>0" class="badge warn">Tartozás: {{itemTartozasFt(block.items[0])}} Ft</span><span v-if="hiany(block.items[0])-Number(block.items[0].hianyFizettDb||0)>0" class="badge warn">{{hiany(block.items[0])-Number(block.items[0].hianyFizettDb||0)}} rekesz tartozás</span><span v-if="itemTartozasFt(block.items[0])===0&&hiany(block.items[0])-Number(block.items[0].hianyFizettDb||0)<=0" class="badge ok">Rendezve</span></div></button>
+    </template><div v-if="!items.length" class="empty-stock">Nincs a keresésnek megfelelő eladás.</div></div></template></section>
 
-  <!-- Mobil "Részletek" modal, csempés elrendezésben -->
-  <div v-if="showDetailModal && detailItem" class="overlay" @click.self="zarDetail">
-    <div class="sale-modal card">
-      <div class="modal-head"><div><h2>{{detailItem.zoldsegNev}} — #{{detailItem.napiSorszam}}</h2><div class="stock-info">{{fmtIdo(detailItem.ido)}} · {{detailItem.vevoNev||'(névtelen)'}}</div></div><button class="icon close" @click="zarDetail">✕</button></div>
-      <div class="detail-tiles">
-        <div class="detail-tile"><span class="dt-label">Zöldség</span><span class="dt-value">{{detailItem.zoldsegNev}}</span></div>
-        <div class="detail-tile"><span class="dt-label">Mennyiség</span><span class="dt-value">{{detailItem.mennyiseg}} {{detailItem.rekeszTipus}}</span></div>
-        <div class="detail-tile"><span class="dt-label">Ár</span><span class="dt-value">{{detailItem.egysegar!=null?detailItem.egysegar+' Ft':'—'}}</span></div>
-        <div class="detail-tile"><span class="dt-label">Vevő</span><span class="dt-value">{{detailItem.vevoNev||'(névtelen)'}}</span></div>
-      </div>
-      <label class="checkbox"><input type="checkbox" :checked="detailItem.fizetve" @change="allapot(detailItem,'fizetve',$event.target.checked)" /> Fizetve</label>
-      <label class="checkbox"><input type="checkbox" :checked="detailItem.elvitte" @change="allapot(detailItem,'elvitte',$event.target.checked)" /> Elvitte</label>
-      <label class="checkbox"><input type="checkbox" :checked="vhRekesz(detailItem)" @change="vhRekeszValt(detailItem,$event.target.checked)" /> Minden rekeszt hozott</label>
-      <label>Visszahozott rekesz<input type="number" min="0" :max="detailItem.mennyiseg" :value="detailItem.visszahozottDb" :disabled="vhRekesz(detailItem)" @change="allapot(detailItem,'visszahozottDb',Number($event.target.value))" /></label>
-      <label>Hiányzó rekeszből kifizetett (db)<input type="number" min="0" :max="hiany(detailItem)" :value="detailItem.hianyFizettDb" @change="allapot(detailItem,'hianyFizettDb',Number($event.target.value))" /></label>
-      <div class="row"><button class="icon" @click="szerkesztesInditasa(detailItem)">✏️ Szerkeszt</button><button class="icon" @click="torol(detailItem)">🗑️ Töröl</button></div>
-    </div>
-  </div>
-
-  <!-- Maradék áru: átvitel modal -->
-  <div v-if="showAtvitelModal" class="overlay" @click.self="zarAtvitel">
-    <div class="sale-modal card">
-      <div class="modal-head"><div><h2>{{atvitelStock?.zoldsegNev}} átvitele</h2><div class="stock-info">Kocsin maradt: <strong>{{atvitelStock?.kocsinMaradt}}</strong> {{atvitelStock?.rekeszTipus}}</div></div><button class="icon close" @click="zarAtvitel">✕</button></div>
-      <label>Célnap<input v-model="atvitelForm.celDatum" type="date" /></label>
-      <label>Átvitt mennyiség<input v-model="atvitelForm.mennyiseg" type="number" min="1" /></label>
-      <p v-if="atvitelHiba" class="hiba">{{atvitelHiba}}</p>
-      <button class="btn-primary save" @click="mentAtvitel">Átvitel mentése</button>
-    </div>
-  </div>
-
-  <TorzsadatModal v-if="showVevoModal" title="Vevők" api-path="/vevek" nev-label="Vevő neve / azonosítója" :nev-kotelezo="false" nev-placeholder="Név, rendszám vagy üresen hagyható" @close="showVevoModal=false" @changed="torzsadatok" />
-  <ZoldsegModal v-if="showZoldsegModal" @close="showZoldsegModal=false" @changed="torzsadatok" />
-  <TorzsadatModal v-if="showRekeszModal" title="Rekesztípusok" api-path="/rekesztipusok" nev-label="Rekesztípus (pl. M10)" :mutat-megjegyzes="false" @close="showRekeszModal=false" @changed="torzsadatok" />
+  <div v-if="showEladasModal" class="overlay" @click.self="zarEladas"><div class="sale-modal card"><div class="modal-head"><div><h2>{{selectedStock?.zoldsegNev}} — eladás</h2><div class="stock-info">Kocsin: <strong>{{selectedStock?.kocsinMaradt}}</strong> rekesz · {{selectedStock?.rekeszTipus}}</div></div><button class="icon close" @click="zarEladas">✕</button></div><label class="checkbox"><input v-model="ujVevoMod" type="checkbox" /> Új / alkalmi vevő</label><label v-if="!ujVevoMod">Vevő (opcionális)<Gyorskereso v-model="form.vevoId" :items="vevek" post-path="/vevek" mentes-label="Vevő mentése" @created="vevoLetrehozva" /></label><div v-else class="row"><label>Név / azonosító<input v-model="form.ujVevoNev" placeholder="pl. rendszám" /></label><label>Megjegyzés<input v-model="form.ujVevoMegjegyzes" /></label></div><div class="row"><label>Mennyit vett<input :value="form.mennyiseg" @input="form.mennyiseg=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label><label>Egységár (Ft/db)<input :value="form.egysegar" @input="form.egysegar=clampDigits($event.target.value,5)" inputmode="numeric" pattern="[0-9]*" class="narrow-5" /></label></div><div class="row"><button type="button" class="toggle-pill" :class="{active:form.fizetve}" @click="form.fizetve=!form.fizetve">{{form.fizetve?'✅ Fizette':'⬜ Fizette'}}</button><button type="button" class="toggle-pill" :class="{active:form.elvitte}" @click="form.elvitte=!form.elvitte">{{form.elvitte?'✅ Elvitte':'⬜ Elvitte'}}</button></div><button type="button" class="toggle-pill wide" :class="{active:form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''}" @click="form.visszahozottDb=(form.visszahozottDb===Number(form.mennyiseg)?0:Number(form.mennyiseg))">{{form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''?'✅ Minden rekeszt hozott':'⬜ Minden rekeszt hozott'}}</button><div class="row"><label>Rekeszt hozott<input :value="form.visszahozottDb" @input="form.visszahozottDb=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" :disabled="form.visszahozottDb===Number(form.mennyiseg)&&form.mennyiseg!==''" /></label><label>Hiányból kifizetett (db)<input :value="form.hianyFizettDb" @input="form.hianyFizettDb=clampDigits($event.target.value,3)" inputmode="numeric" pattern="[0-9]*" class="narrow-3" /></label></div><label>Megjegyzés (opcionális)<input v-model="form.megjegyzes" placeholder="pl. később jön az áruért" /></label><p v-if="hiba" class="hiba">{{hiba}}</p><button class="btn-primary save" @click="ujTetel">Eladás mentése</button><div class="torzsadat-linkek"><button type="button" class="link-btn" @click="showVevoModal=true">Vevők kezelése</button></div></div></div>
+  <div v-if="showDetailModal&&detailItem" class="overlay" @click.self="zarDetail"><div class="sale-modal card"><div class="modal-head"><div><h2>{{detailItem.zoldsegNev}} — #{{detailItem.napiSorszam}}</h2><div class="stock-info">{{fmtIdo(detailItem.ido)}} · {{detailItem.vevoNev||'(névtelen)'}}</div></div><button class="icon close" @click="zarDetail">✕</button></div><div class="detail-tiles"><div class="detail-tile"><span class="dt-label">Zöldség</span><span class="dt-value">{{detailItem.zoldsegNev}}</span></div><div class="detail-tile"><span class="dt-label">Mennyiség</span><span class="dt-value">{{detailItem.mennyiseg}} {{detailItem.rekeszTipus}}</span></div><div class="detail-tile"><span class="dt-label">Ár</span><span class="dt-value">{{detailItem.egysegar!=null?detailItem.egysegar+' Ft':'—'}}</span></div><div class="detail-tile"><span class="dt-label">Vevő</span><span class="dt-value">{{detailItem.vevoNev||'(névtelen)'}}</span></div></div><label class="checkbox"><input type="checkbox" :checked="detailItem.fizetve" @change="allapot(detailItem,'fizetve',$event.target.checked)" /> Fizetve</label><label class="checkbox"><input type="checkbox" :checked="detailItem.elvitte" @change="allapot(detailItem,'elvitte',$event.target.checked)" /> Elvitte</label><label class="checkbox"><input type="checkbox" :checked="vhRekesz(detailItem)" @change="vhRekeszValt(detailItem,$event.target.checked)" /> Minden rekeszt hozott</label><label>Visszahozott rekesz<input type="number" min="0" :max="detailItem.mennyiseg" :value="detailItem.visszahozottDb" :disabled="vhRekesz(detailItem)" @change="allapot(detailItem,'visszahozottDb',Number($event.target.value))" /></label><label>Hiányzó rekeszből kifizetett (db)<input type="number" min="0" :max="hiany(detailItem)" :value="detailItem.hianyFizettDb" @change="allapot(detailItem,'hianyFizettDb',Number($event.target.value))" /></label><div class="row"><button class="icon" @click="szerkesztesInditasa(detailItem)">✏️ Szerkeszt</button><button class="icon" @click="torol(detailItem)">🗑️ Töröl</button></div></div></div>
+  <div v-if="showAtvitelModal" class="overlay" @click.self="zarAtvitel"><div class="sale-modal card"><div class="modal-head"><div><h2>{{atvitelStock?.zoldsegNev}} átvitele</h2><div class="stock-info">Kocsin maradt: <strong>{{atvitelStock?.kocsinMaradt}}</strong> {{atvitelStock?.rekeszTipus}}</div></div><button class="icon close" @click="zarAtvitel">✕</button></div><label>Célnap<input v-model="atvitelForm.celDatum" type="date" /></label><label>Átvitt mennyiség<input v-model="atvitelForm.mennyiseg" type="number" min="1" /></label><p v-if="atvitelHiba" class="hiba">{{atvitelHiba}}</p><button class="btn-primary save" @click="mentAtvitel">Átvitel mentése</button></div></div>
+  <TorzsadatModal v-if="showVevoModal" title="Vevők" api-path="/vevok" nev-label="Vevő neve / azonosítója" :nev-kotelezo="false" nev-placeholder="Név, rendszám vagy üresen hagyható" @close="showVevoModal=false" @changed="torzsadatok" /><ZoldsegModal v-if="showZoldsegModal" @close="showZoldsegModal=false" @changed="torzsadatok" /><TorzsadatModal v-if="showRekeszModal" title="Rekesztípusok" api-path="/rekesztipusok" nev-label="Rekesztípus (pl. M10)" :mutat-megjegyzes="false" @close="showRekeszModal=false" @changed="torzsadatok" />
 </template>
-
 <style scoped>
 .toolbar{margin-bottom:14px}.toolbar-row{display:flex;gap:10px;align-items:end}.toolbar label{flex:1}.toolbar input{width:100%}.date-picker{max-width:180px}.search{min-width:220px}
 .card{background:var(--paper);border:1px solid rgba(43,58,46,.12);border-radius:10px;padding:18px}.stock-card{margin-bottom:18px}.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}h2{margin:0;font-size:16px;color:var(--chalk-green)}.muted{color:var(--olive);font-size:12px}.date-badge{font-size:12px;color:var(--olive);background:rgba(107,122,79,.1);padding:5px 8px;border-radius:6px}
-.stock-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.stock-tile{border:1px solid rgba(43,58,46,.15);border-radius:12px;background:#fff;display:flex;flex-direction:column;box-shadow:0 2px 7px rgba(0,0,0,.05);overflow:hidden}
-.stock-tile-main{padding:0;border:0;background:none;cursor:pointer;display:block}.stock-tile-main:hover{filter:brightness(1.04)}
-.stock-tile-photo{position:relative;height:110px;background-color:rgba(107,122,79,.1);background-size:cover;background-position:center}
-.stock-tile-strip{position:absolute;top:0;left:0;right:0;background:rgba(255,255,255,.92);display:flex;justify-content:space-between;align-items:baseline;padding:6px 9px}
-.stock-tile-strip strong{font-size:14px;color:var(--chalk-green)}.stock-tile-strip span{font-size:18px;font-weight:800;color:var(--olive)}
-.has-photo .stock-tile-photo{background-color:transparent}
-.stock-tile-atvitel{border:0;border-top:1px solid rgba(43,58,46,.1);background:rgba(107,122,79,.06);color:var(--olive);font-size:11px;font-weight:700;padding:8px;cursor:pointer}.stock-tile-atvitel:hover{background:rgba(107,122,79,.14)}
-.empty-stock{grid-column:1/-1;padding:24px;text-align:center;color:var(--olive)}
-.history-card{overflow:hidden}.table-wrap{overflow-x:auto}table{font-size:12px;min-width:900px}table input[type=number]{width:55px}.price-input{max-width:120px!important}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--olive);text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px}label.checkbox{flex-direction:row;align-items:center;gap:8px}.with-icon{display:flex;gap:6px}.with-icon select{flex:1}.icon{background:none;border:0;cursor:pointer;font-size:14px;padding:2px 5px}.ures{color:var(--olive);text-align:center;padding:16px}
-.overlay{position:fixed;inset:0;background:rgba(35,38,32,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:14px}.sale-modal{width:100%;max-width:560px;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}.modal-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}.close{font-size:18px}.stock-info{font-size:12px;color:var(--olive);margin-top:4px}.save{width:100%}.hiba{color:#b3441e;font-size:13px}
-.narrow-3{max-width:70px}.narrow-5{max-width:95px}
-.toggle-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(43,58,46,.2);border-radius:20px;padding:9px 14px;background:#fff;color:var(--chalk-green);font-weight:700;font-size:12px;cursor:pointer;margin-bottom:10px;text-transform:none}.toggle-pill.active{background:var(--chalk-green);color:var(--paper);border-color:var(--chalk-green)}.toggle-pill.wide{width:100%;justify-content:center}
-.torzsadat-linkek{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(43,58,46,.1)}
-.link-btn{background:#fff;border:1px solid rgba(43,58,46,.25);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--chalk-green);cursor:pointer;text-transform:none}
-.link-btn:hover{background:rgba(107,122,79,.08);border-color:var(--olive)}
-.zoldseg-nev{display:inline-flex;align-items:center;gap:6px}
-.mini-thumb{width:20px;height:20px;border-radius:5px;object-fit:cover;flex-shrink:0}
-
-/* Mobil csempés lista */
-.mobile-list{display:flex;flex-direction:column;gap:10px}
-.mobile-tile{text-align:left;border:1px solid rgba(43,58,46,.15);border-radius:10px;background:#fff;padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:6px}
-.mobile-tile-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}.mobile-tile-row strong{font-size:15px;color:var(--chalk-green)}.mobile-tile-time{color:var(--olive);font-size:11px}
-.mobile-tile-badges{display:flex;flex-wrap:wrap;gap:6px}
-.badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:3px 7px;border-radius:5px}
-.badge.ok{background:rgba(107,142,35,.15);color:#4c6a12}.badge.nok{background:rgba(0,0,0,.06);color:#666}.badge.warn{background:rgba(179,68,30,.12);color:#b3441e}
-.detail-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-.detail-tile{background:rgba(107,122,79,.06);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}
-.dt-label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--olive);font-weight:700}.dt-value{font-size:14px;color:var(--chalk-green);font-weight:600}
-
-/* Vevőnkénti csoportosítás - szándékosan eltérő (borostyán) szín, hogy jól elváljon a kártyáktól */
-.group-frame{border:2.5px solid #c98a2c;border-radius:12px;padding:10px;background:rgba(201,138,44,.07);display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(201,138,44,.15)}
-.group-header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-.group-header strong{font-size:15px;color:#8a5a12}
-.group-badges{display:flex;flex-wrap:wrap;gap:6px}
-.group-actions{display:flex;flex-wrap:wrap;gap:4px 14px;margin-left:auto}
-.group-actions .link-btn{font-size:12px;font-weight:700;border-color:#c98a2c;color:#8a5a12}
-.group-actions .link-btn:hover{background:rgba(201,138,44,.12)}
-.grouped-tile{border-color:rgba(201,138,44,.3)}
-.group-header-row td{padding:10px 8px;background:rgba(201,138,44,.1);border-top:3px solid #c98a2c;border-bottom:1px solid rgba(201,138,44,.3)}
-tr.grouped-row td{background:rgba(201,138,44,.03)}
-
-.desktop-only{display:block}.mobile-only{display:none}
-@media(max-width:650px){
-  .desktop-only{display:none !important}.mobile-only{display:flex !important}
-  .toolbar-row{flex-direction:column;align-items:stretch}.date-picker,.search{max-width:none;min-width:0}.date-picker input{width:100%;box-sizing:border-box}.row{grid-template-columns:1fr}.stock-grid{grid-template-columns:repeat(2,1fr)}.stock-tile-photo{height:88px}.stock-tile-strip strong{font-size:12px}.stock-tile-strip span{font-size:15px}.card input,.card select{box-sizing:border-box;max-width:100%}.sale-modal{max-width:100%}
-}
+.stock-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}.stock-tile{border:1px solid rgba(43,58,46,.15);border-radius:12px;background:#fff;display:flex;flex-direction:column;box-shadow:0 2px 7px rgba(0,0,0,.05);overflow:hidden}.stock-tile-main{padding:0;border:0;background:none;cursor:pointer;display:block}.stock-tile-main:hover{filter:brightness(1.04)}.stock-tile-photo{position:relative;height:110px;background-color:rgba(107,122,79,.1);background-size:cover;background-position:center}.stock-tile-strip{position:absolute;top:0;left:0;right:0;background:rgba(255,255,255,.92);display:flex;justify-content:space-between;align-items:baseline;padding:6px 9px}.stock-tile-strip strong{font-size:14px;color:var(--chalk-green)}.stock-tile-strip span{font-size:18px;font-weight:800;color:var(--olive)}.has-photo .stock-tile-photo{background-color:transparent}.stock-tile-atvitel{border:0;border-top:1px solid rgba(43,58,46,.1);background:rgba(107,122,79,.06);color:var(--olive);font-size:11px;font-weight:700;padding:8px;cursor:pointer}.stock-tile-atvitel:hover{background:rgba(107,122,79,.14)}.empty-stock{grid-column:1/-1;padding:24px;text-align:center;color:var(--olive)}
+.history-card{overflow:hidden}.table-wrap{overflow-x:auto}table{font-size:12px;min-width:980px}table input[type=number]{width:55px}.price-input{max-width:120px!important}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--olive);text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px}label.checkbox{flex-direction:row;align-items:center;gap:8px}.with-icon{display:flex;gap:6px}.with-icon select{flex:1}.icon{background:none;border:0;cursor:pointer;font-size:14px;padding:2px 5px}.ures{color:var(--olive);text-align:center;padding:16px}
+.overlay{position:fixed;inset:0;background:rgba(35,38,32,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:14px}.sale-modal{width:100%;max-width:560px;max-height:92vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.25)}.modal-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}.close{font-size:18px}.stock-info{font-size:12px;color:var(--olive);margin-top:4px}.save{width:100%}.hiba{color:#b3441e;font-size:13px}.narrow-3{max-width:70px}.narrow-5{max-width:95px}.toggle-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(43,58,46,.2);border-radius:20px;padding:9px 14px;background:#fff;color:var(--chalk-green);font-weight:700;font-size:12px;cursor:pointer;margin-bottom:10px;text-transform:none}.toggle-pill.active{background:var(--chalk-green);color:var(--paper);border-color:var(--chalk-green)}.toggle-pill.wide{width:100%;justify-content:center}.torzsadat-linkek{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(43,58,46,.1)}.link-btn{background:#fff;border:1px solid rgba(43,58,46,.25);border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--chalk-green);cursor:pointer;text-transform:none}.link-btn:hover{background:rgba(107,122,79,.08);border-color:var(--olive)}.zoldseg-nev{display:inline-flex;align-items:center;gap:6px}.mini-thumb{width:20px;height:20px;border-radius:5px;object-fit:cover;flex-shrink:0}
+.mobile-list{display:flex;flex-direction:column;gap:10px}.mobile-tile{text-align:left;border:1px solid rgba(43,58,46,.15);border-radius:10px;background:#fff;padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:6px}.mobile-tile-row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px}.mobile-tile-row strong{font-size:15px;color:var(--chalk-green)}.mobile-tile-time{color:var(--olive);font-size:11px}.mobile-tile-badges{display:flex;flex-wrap:wrap;gap:6px}.badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:3px 7px;border-radius:5px}.badge.ok{background:rgba(107,142,35,.15);color:#4c6a12}.badge.nok{background:rgba(0,0,0,.06);color:#666}.badge.warn{background:rgba(179,68,30,.12);color:#b3441e}.detail-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.detail-tile{background:rgba(107,122,79,.06);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:2px}.dt-label{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--olive);font-weight:700}.dt-value{font-size:14px;color:var(--chalk-green);font-weight:600}
+.group-frame{border:2.5px solid #c98a2c;border-radius:12px;padding:10px;background:rgba(201,138,44,.07);display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(201,138,44,.15)}.group-header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}.group-header strong{font-size:15px;color:#8a5a12}.group-badges{display:flex;flex-wrap:wrap;gap:6px}.group-actions{display:flex;flex-wrap:wrap;gap:4px 14px;margin-left:auto}.group-actions .link-btn{font-size:12px;font-weight:700;border-color:#c98a2c;color:#8a5a12}.group-actions .link-btn:hover{background:rgba(201,138,44,.12)}.grouped-tile{border-color:rgba(201,138,44,.3)}.group-header-row td{padding:10px 8px;background:rgba(201,138,44,.1);border-top:3px solid #c98a2c;border-bottom:1px solid rgba(201,138,44,.3)}tr.grouped-row td{background:rgba(201,138,44,.03)}
+.desktop-only{display:block}.mobile-only{display:none}@media(max-width:650px){.desktop-only{display:none!important}.mobile-only{display:flex!important}.toolbar-row{flex-direction:column;align-items:stretch}.date-picker,.search{max-width:none;min-width:0}.date-picker input{width:100%;box-sizing:border-box}.row{grid-template-columns:1fr}.stock-grid{grid-template-columns:repeat(2,1fr)}.stock-tile-photo{height:88px}.stock-tile-strip strong{font-size:12px}.stock-tile-strip span{font-size:15px}.card input,.card select{box-sizing:border-box;max-width:100%}.sale-modal{max-width:100%}}
 </style>
