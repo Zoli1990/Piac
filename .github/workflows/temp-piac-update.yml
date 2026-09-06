@@ -1,0 +1,193 @@
+name: Temp Piac update
+on:
+  push:
+    branches: [egyenleg-ujratervezes]
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: egyenleg-ujratervezes
+      - name: Apply requested changes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          # 1) Backend: purchased goods require unit price.
+          p = Path('RekeszAppBackend/Controllers/FelvasarlasController.cs')
+          s = p.read_text(encoding='utf-8')
+          old = 'if(r.Egysegar is <0)return new BadRequestObjectResult(new{message="Az egységár nem lehet negatív."});'
+          new = 'if(!r.SajatTermek && (r.Egysegar is null || r.Egysegar <= 0))return new BadRequestObjectResult(new{message="Vásárolt árunál az egységár megadása kötelező."});if(r.Egysegar is <0)return new BadRequestObjectResult(new{message="Az egységár nem lehet negatív."});'
+          if old not in s:
+              raise SystemExit('FelvasarlasController validation pattern not found')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+
+          # 2) Frontend: purchased unit price required; empty crate defaults to 0.
+          p = Path('RekeszAppFrontend/src/views/FelvasarlasView.vue')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace("adottRekeszDb:'',egysegar:'',", "adottRekeszDb:0,egysegar:'',")
+          s = s.replace("watch(()=>form.value.mennyiseg,v=>{if(!adottRekeszManual.value)form.value.adottRekeszDb=v})\n", "")
+          s = s.replace("adottRekeszManual.value=false;form.value={...form.value,zoldsegId:'',mennyiseg:'',fizetve:false,adottRekeszDb:'',egysegar:'',megjegyzes:''}", "adottRekeszManual.value=false;form.value={...form.value,zoldsegId:'',mennyiseg:'',fizetve:false,adottRekeszDb:0,egysegar:'',megjegyzes:''}")
+          s = s.replace("if(Number(form.value.adottRekeszDb)>Number(form.value.mennyiseg))return hiba.value='Az adott rekesz nem lehet több a mennyiségnél.';try{", "if(Number(form.value.adottRekeszDb)>Number(form.value.mennyiseg))return hiba.value='Az adott rekesz nem lehet több a mennyiségnél.';if(!form.value.sajatTermek&&(form.value.egysegar===''||Number(form.value.egysegar)<=0))return hiba.value='Vásárolt árunál az egységár megadása kötelező.';try{")
+          s = s.replace("placeholder=\"opcionális\"", ":required=\"!form.sajatTermek\" :placeholder=\"form.sajatTermek?'opcionális':'kötelező'\"")
+          p.write_text(s, encoding='utf-8')
+
+          # 3) Backend: group warehouse stock by vegetable + crate type, keep source rows for safe movement,
+          #    and calculate weighted average purchase price from the currently remaining quantities.
+          p = Path('RekeszAppBackend/Controllers/FelvasarlasController.cs')
+          s = p.read_text(encoding='utf-8')
+          pattern = r'\s*// Raktáron lévő, még ki nem szállított készlet - TÉTELENKÉNT.*?\n \[HttpPost\("raktarbol-kocsira"\)\]'
+          replacement = '''
+ // Raktárkészlet csoportosítva zöldség + rekesztípus szerint. Az eredeti felvásárlási
+ // tételek külön maradnak; a forrasTetelek tömb biztosítja, hogy áthelyezéskor mindig
+ // az eredeti tételazonosítókkal dolgozzunk. Az átlagár a jelenleg megmaradt mennyiséggel súlyozott.
+ [HttpGet("raktar")]
+ public async Task<IActionResult> Raktar()
+ {
+     var sorok = await db.FelvasarlasTetelek
+         .Where(x => x.Helyszin == FelvasarlasHelyszin.Raktar && x.Mennyiseg > x.AthelyezveDb)
+         .Include(x => x.Partner).Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
+         .OrderBy(x => x.Datum).ThenBy(x => x.Ido)
+         .ToListAsync();
+
+     var eredmeny = sorok
+         .GroupBy(x => new { x.ZoldsegId, ZoldsegNev = x.Zoldseg.Nev, x.RekeszTipusId, RekeszTipusNev = x.RekeszTipus.Nev, KepUrl = x.Zoldseg.KepUrl })
+         .Select(g =>
+         {
+             var forrasok = g.Select(x => new
+             {
+                 id = x.Id,
+                 maradt = x.Mennyiseg - x.AthelyezveDb,
+                 partnerNev = x.Partner != null ? x.Partner.Nev : null,
+                 egysegar = x.Egysegar
+             }).Where(x => x.maradt > 0).ToList();
+             var db = forrasok.Sum(x => x.maradt);
+             var arasMennyiseg = forrasok.Where(x => x.egysegar.HasValue).Sum(x => x.maradt * x.egysegar!.Value);
+             var arasDb = forrasok.Where(x => x.egysegar.HasValue).Sum(x => x.maradt);
+             return new
+             {
+                 id = forrasok.First().id,
+                 zoldsegId = g.Key.ZoldsegId,
+                 zoldsegNev = g.Key.ZoldsegNev,
+                 zoldsegKepUrl = g.Key.KepUrl,
+                 rekeszTipusId = g.Key.RekeszTipusId,
+                 rekeszTipus = g.Key.RekeszTipusNev,
+                 mennyiseg = db,
+                 maradt = db,
+                 egysegar = arasDb > 0 ? (decimal?)(arasMennyiseg / arasDb) : null,
+                 forrasTetelek = forrasok
+             };
+         })
+         .OrderBy(x => x.zoldsegNev).ThenBy(x => x.rekeszTipus)
+         .ToList();
+     return Ok(eredmeny);
+ }
+
+ // Raktáron lévő áru részleges/teljes áthelyezése a kocsira.
+ [HttpPost("raktarbol-kocsira")]'''
+          ns, count = re.subn(pattern, replacement, s, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'Raktar method replacement count={count}')
+          p.write_text(ns, encoding='utf-8')
+
+          # 4) Kocsi stock: retain grouping, add weighted average price based on the current
+          #    remaining quantity. Since sales are not source-linked in the data model, the
+          #    report uses proportional depletion within each vegetable+crate group.
+          p = Path('RekeszAppBackend/Controllers/RiportokController.cs')
+          s = p.read_text(encoding='utf-8')
+          pattern = r'    \[Authorize\(Roles = "Admin"\)\]\n    \[HttpGet\("keszlet"\)\].*?\n    // Rekesz-mennyiség részletező:'
+          replacement = '''    [Authorize(Roles = "Admin")]
+    [HttpGet("keszlet")]
+    public async Task<IActionResult> Keszlet([FromQuery] DateOnly? datum)
+    {
+        var d = datum ?? DateOnly.FromDateTime(DateTime.Today);
+
+        var felvasarolt = await db.FelvasarlasTetelek
+            .Where(x => x.Datum == d && x.Helyszin == FelvasarlasHelyszin.Kocsi)
+            .Include(x => x.Zoldseg).Include(x => x.RekeszTipus)
+            .GroupBy(x => new { x.ZoldsegId, ZoldsegNev = x.Zoldseg.Nev, x.RekeszTipusId, RekeszTipusNev = x.RekeszTipus.Nev })
+            .Select(g => new
+            {
+                g.Key.ZoldsegId,
+                g.Key.ZoldsegNev,
+                g.Key.RekeszTipusId,
+                g.Key.RekeszTipusNev,
+                mennyiseg = g.Sum(x => x.Mennyiseg),
+                ertek = g.Where(x => x.Egysegar.HasValue).Sum(x => x.Mennyiseg * x.Egysegar!.Value),
+                arasDb = g.Where(x => x.Egysegar.HasValue).Sum(x => x.Mennyiseg)
+            }).ToListAsync();
+
+        var eladott = await db.EladasTetelek
+            .Where(x => x.Datum == d)
+            .GroupBy(x => new { x.ZoldsegId, x.RekeszTipusId })
+            .Select(g => new { g.Key.ZoldsegId, g.Key.RekeszTipusId, Mennyiseg = g.Sum(x => x.Mennyiseg) })
+            .ToListAsync();
+
+        var sorok = felvasarolt
+            .Select(f =>
+            {
+                var eladva = eladott.Where(e => e.ZoldsegId == f.ZoldsegId && e.RekeszTipusId == f.RekeszTipusId).Sum(e => e.Mennyiseg);
+                var maradt = Math.Max(0, f.mennyiseg - eladva);
+                return new
+                {
+                    zoldsegId = f.ZoldsegId,
+                    zoldsegNev = f.ZoldsegNev,
+                    rekeszTipusId = f.RekeszTipusId,
+                    rekeszTipus = f.RekeszTipusNev,
+                    felvasarolva = f.mennyiseg,
+                    eladva,
+                    kocsinMaradt = maradt,
+                    atlagVeteliAr = f.arasDb > 0 ? (decimal?)(f.ertek / f.arasDb) : null
+                };
+            })
+            .Where(x => x.kocsinMaradt > 0)
+            .OrderBy(x => x.zoldsegNev)
+            .ThenBy(x => x.rekeszTipus)
+            .ToList();
+
+        return Ok(sorok);
+    }
+
+    // Rekesz-mennyiség részletező:'''
+          ns, count = re.subn(pattern, replacement, s, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'Keszlet method replacement count={count}')
+          p.write_text(ns, encoding='utf-8')
+
+          # 5) Eladás history: show the same financial + crate debt summary for every item,
+          #    not only customers having 2+ sales.
+          p = Path('RekeszAppFrontend/src/views/EladasView.vue')
+          s = p.read_text(encoding='utf-8')
+          old = "return blocks.map(b=>({...b, grouped: b.vevoId!==null && b.items.length>1}))"
+          new = "return blocks.map(b=>({...b, grouped: true}))"
+          if old not in s:
+              raise SystemExit('EladasView grouped pattern not found')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+
+          # 6) Remove this temporary workflow before packaging/committing.
+          Path('.github/workflows/temp-piac-update.yml').unlink()
+      - name: Frontend build
+        working-directory: RekeszAppFrontend
+        run: npm ci && npm run build
+      - name: Commit requested changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add RekeszAppBackend/Controllers/FelvasarlasController.cs RekeszAppBackend/Controllers/RiportokController.cs RekeszAppFrontend/src/views/FelvasarlasView.vue RekeszAppFrontend/src/views/EladasView.vue .github/workflows/temp-piac-update.yml
+          git diff --cached --quiet || git commit -m "Készlet csoportosítás és tartozás kijelzés javítása"
+          git push origin HEAD:egyenleg-ujratervezes
+      - name: Package repository
+        run: |
+          rm -rf RekeszAppFrontend/node_modules RekeszAppFrontend/dist RekeszAppBackend/bin RekeszAppBackend/obj
+          zip -qr /tmp/Piac-egyenleg-ujratervezes.zip . -x './.git/*'
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: Piac-egyenleg-ujratervezes
+          path: /tmp/Piac-egyenleg-ujratervezes.zip
+          archive: false
+          retention-days: 7
