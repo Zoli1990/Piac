@@ -1,0 +1,173 @@
+/* Piac - mobile-first responsive layer
+   Kept separate so the original component styling remains intact. */
+
+html, body, #app { min-width: 0; max-width: 100%; }
+body { overflow-x: hidden; }
+
+/* Base layout: phone first. Desktop enhancements are below. */
+main { width: 100%; max-width: 100%; margin: 0 auto; padding: 12px !important; }
+main.no-header { max-width: 100% !important; padding-top: 32px !important; }
+
+.grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+.row { grid-template-columns: 1fr !important; gap: 10px !important; }
+
+.card { min-width: 0; width: 100%; padding: 14px !important; border-radius: 12px !important; }
+.card input:not([type="checkbox"]):not([type="radio"]), .card select, .card textarea { width: 100%; max-width: 100% !important; min-width: 0; }
+
+/* Touch targets without making checkbox/radio controls oversized. */
+button, input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; }
+input[type="checkbox"], input[type="radio"] { min-height: 20px !important; width: 20px !important; height: 20px; flex-shrink: 0; }
+.btn-primary, .btn-secondary { min-height: 44px; }
+.link-btn, .foto-btn, .toggle-pill, .radio-pill { min-height: 44px; }
+
+/* Header */
+header {
+  padding: 9px 12px !important;
+  gap: 8px !important;
+  align-items: center !important;
+}
+header .brand { min-width: 0; }
+header nav {
+  order: 3;
+  width: 100%;
+  flex-basis: 100%;
+  gap: 4px !important;
+}
+header nav a {
+  flex: 1 1 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 5px !important;
+  text-align: center;
+}
+header .user { margin-left: auto; gap: 6px !important; }
+header .user > span { display: none; }
+header .calc-label { display: none; }
+header .calc-button { min-height: 42px; padding: 8px 10px !important; }
+header .user .btn-secondary { width: auto !important; padding-inline: 12px !important; }
+
+/* Search/autocomplete controls */
+.with-icon, .foto-row, .torzsadat-linkek, .nav-row { width: 100%; }
+.gk-row { flex-direction: column !important; align-items: stretch; }
+.gk-row input, .gk-mentes { width: 100% !important; min-width: 0 !important; }
+.torzsadat-linkek { flex-direction: column; }
+.torzsadat-linkek .link-btn { width: 100%; }
+
+/* Image tiles: target roughly 4:3, not the old 16:9 crop. */
+.felv-grid,
+.stock-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+}
+.felv-tile, .stock-tile { width: 100%; min-width: 0; }
+.felv-tile-photo,
+.stock-tile-photo,
+[class*="tile-photo"] {
+  aspect-ratio: 4 / 3 !important;
+  height: auto !important;
+  min-height: 0 !important;
+}
+.felv-tile-name { font-size: 12px !important; line-height: 1.2; }
+.felv-tile-info { font-size: 10px !important; line-height: 1.25; }
+.stock-tile-strip strong { font-size: 12px !important; }
+.stock-tile-strip span { font-size: 16px !important; }
+.raktar-tile-wrap, .stock-tile { min-width: 0; }
+.raktar-tile-wrap .athelyez-btn, .stock-tile-atvitel { width: 100%; }
+
+/* Forms and compact controls */
+.narrow-3, .narrow-5, .price-input { max-width: 100% !important; width: 100% !important; }
+.helyszin-radio { width: 100%; gap: 7px !important; }
+.radio-pill { min-width: 0; padding: 8px 7px !important; }
+.toggle-pill { width: 100%; justify-content: center; }
+
+/* Tables remain available through a deliberate horizontal scroll rather than
+   squeezing unreadable columns into a phone viewport. */
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap table { min-width: 700px; }
+
+/* Modals: full-width bottom sheet on phones, with safe scrolling. */
+.overlay {
+  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)) !important;
+  align-items: flex-end !important;
+  overflow: hidden;
+}
+.overlay > .card,
+.overlay > .modal,
+.athelyez-modal,
+.felv-detail-modal,
+.sale-modal {
+  width: 100% !important;
+  max-width: none !important;
+  max-height: calc(100dvh - 16px) !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  border-radius: 16px 16px 10px 10px !important;
+  padding: 16px !important;
+}
+.overlay .section-head { gap: 8px; }
+.overlay .section-head h2 { min-width: 0; overflow-wrap: anywhere; }
+.overlay .icon, .overlay .close { min-width: 44px; min-height: 44px; }
+.overlay .nav-row { flex-direction: column-reverse; gap: 8px; }
+.overlay .nav-row button { width: 100%; }
+.detail-tiles { grid-template-columns: 1fr !important; }
+
+/* Calculator has its own overlay class. */
+.calc-overlay {
+  padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)) !important;
+  align-items: flex-end !important;
+  overflow: hidden;
+}
+.calculator {
+  width: 100% !important;
+  max-width: 380px !important;
+  max-height: calc(100dvh - 16px) !important;
+  overflow-y: auto;
+  border-radius: 24px !important;
+}
+
+/* Small phones */
+@media (max-width: 360px) {
+  main { padding: 9px !important; }
+  .card { padding: 12px !important; }
+  .felv-grid, .stock-grid { grid-template-columns: 1fr !important; }
+  .felv-tile-photo, .stock-tile-photo, [class*="tile-photo"] { aspect-ratio: 4 / 3 !important; }
+  header nav a { font-size: 12px; }
+  .calculator { max-width: 100% !important; padding: 10px !important; }
+  .keys { gap: 7px !important; }
+  .keys button { height: 58px !important; }
+}
+
+/* Desktop enhancement: restore the wider working layout. */
+@media (min-width: 901px) {
+  main { max-width: 1100px !important; padding: 20px !important; }
+  main.no-header { max-width: 420px !important; padding-top: 80px !important; }
+  .grid { grid-template-columns: 1fr 1.4fr !important; gap: 18px !important; }
+  .row { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+  .felv-grid, .stock-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)) !important; gap: 12px !important; }
+  .felv-tile-photo, .stock-tile-photo, [class*="tile-photo"] { aspect-ratio: 4 / 3 !important; }
+  .overlay { align-items: center !important; justify-content: center !important; padding: 14px !important; }
+  .overlay > .card,
+  .overlay > .modal,
+  .athelyez-modal,
+  .felv-detail-modal,
+  .sale-modal { max-width: 520px !important; max-height: 85vh !important; border-radius: 10px !important; }
+  .overlay .nav-row { flex-direction: row; }
+  .overlay .nav-row button { width: auto; }
+  .calc-overlay { align-items: center !important; justify-content: center !important; padding: 20px !important; }
+  .calculator { width: min(330px,100%) !important; max-width: 330px !important; max-height: 90vh !important; }
+  .gk-row { flex-direction: row !important; }
+  .gk-row input { width: auto !important; }
+  .gk-mentes { width: auto !important; }
+  .torzsadat-linkek { flex-direction: row; }
+  .torzsadat-linkek .link-btn { width: auto; }
+}
+
+/* The own-product form has no payment state in the UI. Modern browsers support
+   :has(), which lets us hide the payment toggle without touching business logic. */
+.card:has(.checkbox input[type="checkbox"]:checked) .toggle-pill { display: none !important; }
