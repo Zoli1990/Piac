@@ -544,6 +544,23 @@ Commit:
 
 `2b4a6b3f584252e1b9a0594394aadc09918642ae`
 
+### Hiányzó `RaktarHelyszin` EF migráció pótlása
+
+Az éles adatbázison (`db66470`) az `__efmigrationshistory` tábla szerint már régebben lefutott egy `20260902201337_RaktarHelyszin` nevű migráció (feltehetően közvetlenül az adatbázison, migrációs fájl nélkül), amely:
+
+- felvette a `Helyszin` és `AthelyezveDb` oszlopokat a `FelvasarlasTetelek` táblára (raktár funkció);
+- átköltöztette a `KepUrl` oszlopot `FelvasarlasTetelek`-ről `Zoldsegek`-re (kategória-szintű kép).
+
+A migrációs fájl viszont sosem került be a repóba, és az `AppDbContextModelSnapshot.cs` sem lett frissítve — így a repo migrációtörténete nem egyezett sem a C# modellel (`Entities.cs`), sem az éles DB tényleges sémájával. Ez egy feltöltött phpMyAdmin dump (`db66470.sql`) alapján derült ki.
+
+Pótoltuk a hiányzó migrációt (`20260902201337_RaktarHelyszin.cs` + `.Designer.cs`, ugyanazzal az ID-val, amit az éles DB már ismer, hogy EF ne akarja újra lefuttatni), és frissítettük a `ModelSnapshot`-ot, hogy az most már pontosan tükrözze a jelenlegi modellt és az éles DB tényleges szerkezetét. Ezt a fájlt Claude kézzel írta (sandbox-ban nincs NuGet-hozzáférés a `dotnet ef` eszközhöz), az EF Core generálási konvencióit követve — **lokálisan érdemes leellenőrizni** a `dotnet ef migrations has-pending-model-changes` paranccsal, hogy tényleg nincs eltérés a modell és a migrációtörténet között.
+
+Ettől kezdve egy teljesen üres adatbázison lefuttatva a 3 migrációt (`InitialCreate` → `EladasHianyFelvasarlasKiegeszites` → `RaktarHelyszin`), a séma pontosan az éles DB jelenlegi állapotát adja vissza — ez lesz az alapja az új, tiszta adatbázisra való átállásnak.
+
+Commit:
+
+`(ide kerül a commit hash a pusholás után)`
+
 ---
 
 # 14. Aktuális fejlesztési állapot
