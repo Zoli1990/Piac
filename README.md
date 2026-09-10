@@ -559,7 +559,7 @@ Ettől kezdve egy teljesen üres adatbázison lefuttatva a 3 migrációt (`Initi
 
 Commit:
 
-`(ide kerül a commit hash a pusholás után)`
+`642d289bd3b4917bbb07296e2f207191fab6d3a0`
 
 ---
 
